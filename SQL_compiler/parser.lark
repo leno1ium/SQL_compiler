@@ -1,0 +1,98 @@
+%import common.NUMBER
+//%import common.CNAME
+%import common.LETTER
+%import common.DIGIT
+%import common.NEWLINE
+%import common.WS
+
+%ignore WS
+
+COMMENT: "/*" /(.|\n|\r)+/ "*/"
+    |  "//" /(.)+/ NEWLINE
+%ignore COMMENT
+
+IDENT: /(?!(if|else|while|for|break|continue|return))/ LETTER (LETTER | DIGIT | "_")*
+
+num: NUMBER
+ident: IDENT
+
+?lvalue: ident
+
+?inc_dec: "--" lvalue -> prefix_dec
+    | "++" lvalue -> prefix_inc
+    | lvalue "--" -> suffix_dec
+    | lvalue "++" -> suffix_inc
+
+?primary: num
+    | inc_dec
+    | lvalue
+    | "(" expr ")"
+    | call
+
+call: ident "(" (expr ("," expr)*)? ")"
+
+?unary: primary
+    | "+" unary -> plus
+    | "-" unary -> minus
+    | "!" unary -> not
+
+?mult: unary
+    | mult "*" unary    -> mul
+    | mult "/" unary    -> div
+    | mult "%" unary    -> rem
+
+?add: mult
+    | add "+" mult      -> add
+    | add "-" mult      -> sub
+
+?compare: add
+    | add ">" add         -> gt
+    | add ">=" add        -> ge
+    | add "<" add         -> lt
+    | add "<=" add        -> le
+
+?equals: compare
+    | compare "==" compare -> eq
+    | compare "!=" compare -> ne
+
+?logic_and: equals
+    | logic_and "&&" equals
+
+?logic_or: logic_and
+    | logic_or "||" logic_and
+
+?expr: logic_or
+
+?type: ident
+
+ident_assign: ident "=" expr -> assign
+assign: lvalue "=" expr -> assign
+
+?simple_stmt: call
+    | assign
+    | -> stmt_list
+    | type (ident | ident_assign) ("," (ident | ident_assign))* -> vars_decl
+    | "return" expr? -> return
+    | "break" -> break
+    | "continue" -> continue
+    | // empty
+
+?expr_or_empty: expr
+    | // empty
+
+?stmt: simple_stmt ";"
+    | "{" stmt_list "}"
+    | "if" "(" expr ")" stmt ("else" stmt)? -> if
+    | "while" "(" expr ")" stmt -> while
+    | "for" "(" simple_stmt ";" expr_or_empty ";" simple_stmt ")" stmt  -> for
+    | func
+    | inc_dec
+
+func_param: type ident -> vars_decl
+func: type ident "(" (func_param ("," func_param)*)? ")" "{" stmt_list "}"
+
+?stmt_list: (stmt ";"*)*
+
+?prog: stmt_list
+
+?start: prog
