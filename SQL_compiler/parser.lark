@@ -4,95 +4,139 @@
 %import common.DIGIT
 %import common.NEWLINE
 %import common.WS
+%import common.SH_COMMENT
 
 %ignore WS
+%ignore SH_COMMENT
 
 COMMENT: "/*" /(.|\n|\r)+/ "*/"
-    |  "//" /(.)+/ NEWLINE
 %ignore COMMENT
 
-IDENT: /(?!(if|else|while|for|break|continue|return))/ LETTER (LETTER | DIGIT | "_")*
+//SQL keywords
+SELECT: "select"i
+FROM: "from"i
+WHERE: "where"i
+AND: "and"i
+OR: "or"i
+NOT: "not"i
+LIKE: "like"i
+IN: "in"i
+IS: "is"i
+NULL: "null"i
+TRUE: "true"i
+FALSE: "false"i
+DISTINCT: "distinct"i
+ALL: "all"i
+AS: "as"i
+ON: "on"i
+JOIN: "join"i
+INNER: "inner"i
+LEFT: "left"i
+RIGHT: "right"i
+OUTER: "outer"i
+CROSS: "cross"i
+BY: "by"i
+GROUP: "group"i
+HAVING: "having"i
+ASC: "asc"i
+DESC: "desc"i
+LIMIT: "limit"i
+OFFSET: "offset"i
+BETWEEN: "between"i
+EXISTS: "exists"i
 
+IDENT: /(?!(select|from|where|and|or|not|like|in|is|null|true|false|distinct|all|as|on|join|inner|left|right|outer|cross|by|group|having|asc|desc|limit|offset|between|exists))/i LETTER (LETTER | DIGIT | "_")*
+
+//basic data types
 num: NUMBER
-ident: IDENT
+string: ESCAPED_STRING
+bool: TRUE | FALSE
+null: NULL -> null_const
 
-?lvalue: ident
+ident: (IDENT ("." IDENT)*) -> compound_ident
+    | "*" -> star
 
-?inc_dec: "--" lvalue -> prefix_dec
-    | "++" lvalue -> prefix_inc
-    | lvalue "--" -> suffix_dec
-    | lvalue "++" -> suffix_inc
+?primary_expr: num
+    |string
+    |bool
+    |null
+    |ident
+    |"(" expr ")"
+    |EXISTS "(" select_stmt ")" -> exists_subquery
 
-?primary: num
-    | inc_dec
-    | lvalue
-    | "(" expr ")"
-    | call
+?unary_expr: primary_expr
+    |"+" unary_expr -> plus
+    |"-" unary_expr -> minus
+    |NOT unary_expr -> not_expr
+    |IS NULL -> is_null
+    |IS NOT NULL -> is_not_null
 
-call: ident "(" (expr ("," expr)*)? ")"
+?mul_expr: unary_expr
+    |mul_expr "*" unary_expr -> mul
+    |mul_expr "/" unary_expr -> div
+    |mul_expr "%" unary_expr -> rem
 
-?unary: primary
-    | "+" unary -> plus
-    | "-" unary -> minus
-    | "!" unary -> not
+?add_expr: mul_expr
+    |add_expr "+" mul_expr -> add
+    |add_expr "-" mul_expr -> sub
 
-?mult: unary
-    | mult "*" unary    -> mul
-    | mult "/" unary    -> div
-    | mult "%" unary    -> rem
+?compare_expr: add_expr
+    |add_expr ">" add_expr -> gt
+    |add_expr ">=" add_expr -> ge
+    |add_expr "<" add_expr -> lt
+    |add_expr "<=" add_expr -> le
+    |add_expr "=" add_expr -> eq
+    |add_expr "!=" add_expr -> ne
+    |add_expr "<>" add_expr -> ne
 
-?add: mult
-    | add "+" mult      -> add
-    | add "-" mult      -> sub
+?like_expr: compare_expr
+    | compare_expr LIKE compare_expr -> like
+    | compare_expr NOT LIKE compare_expr -> not_like
+    | compare_expr IN "(" (expr ("," expr)*) ")" -> in_expr
+    | compare_expr NOT IN "(" (expr ("," expr)*) ")" -> not_in
+    | compare_expr BETWEEN compare_expr AND compare_expr -> between
+    | compare_expr NOT BETWEEN compare_expr AND compare_expr -> not_between
 
-?compare: add
-    | add ">" add         -> gt
-    | add ">=" add        -> ge
-    | add "<" add         -> lt
-    | add "<=" add        -> le
+?and_expr: like_expr
+    | and_expr AND like_expr -> and_expr
 
-?equals: compare
-    | compare "==" compare -> eq
-    | compare "!=" compare -> ne
+?or_expr: and_expr
+    | or_expr OR and_expr -> or_expr
 
-?logic_and: equals
-    | logic_and "&&" equals
+?expr: or_expr
 
-?logic_or: logic_and
-    | logic_or "||" logic_and
+//SELECT requests
+select_stmt: select_core order_by? limit_offset? -> select_stmt
 
-?expr: logic_or
+select_core: SELECT distinct? select_list
+    (FROM table_refs)?
+    (WHERE expr)?
+    (GROUP BY expr ("," expr)* (HAVING expr)?)? -> select_core
 
-?type: ident
+select_list: (select_item ("," select_item)*) -> select_list //список выбора
 
-ident_assign: ident "=" expr -> assign
-assign: lvalue "=" expr -> assign
+select_item: expr(AS? ident)? -> select_item //элементы выбора
+    | "*" -> select_all
 
-?simple_stmt: call
-    | assign
-    | -> stmt_list
-    | type (ident | ident_assign) ("," (ident | ident_assign))* -> vars_decl
-    | "return" expr? -> return
-    | "break" -> break
-    | "continue" -> continue
-    | // empty
+table_refs: table_ref ("," table_ref)* -> table_refs
 
-?expr_or_empty: expr
-    | // empty
+table_ref: table_primary (join_clause)* -> table_ref
 
-?stmt: simple_stmt ";"
-    | "{" stmt_list "}"
-    | "if" "(" expr ")" stmt ("else" stmt)? -> if
-    | "while" "(" expr ")" stmt -> while
-    | "for" "(" simple_stmt ";" expr_or_empty ";" simple_stmt ")" stmt  -> for
-    | func
-    | inc_dec
+table_primary: ident (AS? ident)? -> table_base
+    |"(" select_stmt ")" (AS? ident)? -> table_subquery
 
-func_param: type ident -> vars_decl
-func: type ident "(" (func_param ("," func_param)*)? ")" "{" stmt_list "}"
+join_clause: join_type? JOIN table_primary (ON expr)? -> join_clause
 
-?stmt_list: (stmt ";"*)*
+join_type: INNER -> inner_join
+    |LEFT (OUTER)? -> left_join
+    |RIGHT (OUTER)? -> right_join
+    |CROSS -> cross_join
 
-?prog: stmt_list
+order_by: ORDER BY ordering_term ("," ordering_term)* -> order_by
 
-?start: prog
+ordering_term: expr(ASC | DESC)? -> ordering_term
+
+limit_offset: LIMIT expr (OFFSET expr)? -> limit_offset
+
+
+?start: select_stmt
