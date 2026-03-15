@@ -1,19 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Tuple, Optional, List
+from typing import Callable, Tuple, Optional, List, Any
 from enum import Enum
 
 
 class AstNode(ABC):
     @property
-    def childs(self)->Tuple['AstNode', ...]:
+    def childs(self) -> Tuple['AstNode', ...]:
         return ()
 
     @abstractmethod
-    def __str__(self)->str:
+    def __str__(self) -> str:
         pass
 
     @property
-    def tree(self)->[str, ...]:
+    def tree(self) -> [str, ...]:
         res = [str(self)]
         childs = self.childs
         for i, child in enumerate(childs):
@@ -23,7 +23,7 @@ class AstNode(ABC):
             res.extend(((ch0 if j == 0 else ch) + ' ' + s for j, s in enumerate(child.tree)))
         return res
 
-    def visit(self, func: Callable[['AstNode'], None])->None:
+    def visit(self, func: Callable[['AstNode'], None]) -> None:
         func(self)
         map(func, self.childs)
 
@@ -31,59 +31,86 @@ class AstNode(ABC):
         return self.childs[index] if index < len(self.childs) else None
 
 
-class ExprNode(AstNode):
+class ExprNode(AstNode):  # expression
     pass
 
 
-class ValueNode(ExprNode):
+class ValueNode(ExprNode):  # literals
     pass
 
 
-class StmtNode(AstNode):
+class StmtNode(AstNode):  # operators
     pass
 
 
+# base values
 class NumNode(ValueNode):
     def __init__(self, num: float):
         super().__init__()
         self.num = float(num)
 
-    def __str__(self)->str:
+    def __str__(self) -> str:
         return str(self.num)
 
 
+class StringNode(ValueNode):
+    def __init__(self, value: str):
+        super().__init__()
+        self.value = value.strip('"\'')
+
+    def __str__(self) -> str:
+        return f"'{self.value}'"
+
+
+class BoolNode(ValueNode):
+    def __init__(self, value: bool):
+        super().__init__()
+        self.value = value
+
+    def __str__(self) -> str:
+        return 'TRUE' if self.value else 'FALSE'
+
+
+class NullNode(ValueNode):
+    def __str__(self) -> str:
+        return 'NULL'
+
+
+# identifiers
 class IdentNode(ExprNode):
     def __init__(self, name: str):
         super().__init__()
         self.name = str(name)
 
-    def __str__(self)->str:
+    def __str__(self) -> str:
         return str(self.name)
 
 
-class IncDecOp(Enum):
-    PREFIX_INC = '++()'
-    PREFIX_DEC = '--()'
-    SUFFIX_INC = '()++'
-    SUFFIX_DEC = '()--'
-
-
-class IncDecNode(AstNode):
-    def __init__(self, op: IncDecOp, ident: IdentNode):
+class CompoundIdentNode(ExprNode):
+    def __init__(self, parts: List[str]):
         super().__init__()
-        self.op = op
-        self.ident = ident
+        self.parts = parts
 
     @property
-    def childs(self) -> Tuple[ExprNode]:
-        return self.ident,
+    def full_name(self) -> str:
+        return '.'.join(self.parts)
+
+    @property
+    def childs(self) -> Tuple['AstNode', ...]:
+        return tuple(IdentNode(part) for part in self.parts)
 
     def __str__(self) -> str:
-        return str(self.op.value)
+        return self.full_name
 
 
+class StarNode(ExprNode):
+    def __str__(self) -> str:
+        return '*'
+
+
+# operators
 class UnOp(Enum):
-    NOT = '!'
+    NOT = 'NOT'
     PLUS = '+'
     MINUS = '-'
 
@@ -98,7 +125,7 @@ class UnOpNode(ExprNode):
     def childs(self) -> Tuple[ExprNode]:
         return self.arg,
 
-    def __str__(self)->str:
+    def __str__(self) -> str:
         return str(self.op.value)
 
 
@@ -108,14 +135,24 @@ class BinOp(Enum):
     MUL = '*'
     DIV = '/'
     REM = '%'
+
     GT = '>'
     GE = '>='
     LT = '<'
     LE = '<='
     EQ = '=='
     NE = '!='
-    LOGIC_OR = '||'
-    LOGIC_AND = '&&'
+    NE2 = '<>'
+
+    OR = 'OR'
+    AND = 'AND'
+
+    LIKE = 'LIKE'
+    NOT_LIKE = 'NOT LIKE'
+    IN = 'IN'
+    NOT_IN = 'NOT IN'
+    IS = 'IS'
+    IS_NOT = 'IS NOT'
 
 
 class BinOpNode(ExprNode):
@@ -129,121 +166,222 @@ class BinOpNode(ExprNode):
     def childs(self) -> Tuple[ExprNode, ExprNode]:
         return self.arg1, self.arg2
 
-    def __str__(self)->str:
+    def __str__(self) -> str:
         return str(self.op.value)
 
 
-class AssignNode(ExprNode, StmtNode):
-    def __init__(self, var: ExprNode, val: ExprNode):
+class BetweenNode(ExprNode):
+    def __init__(self, expr: ExprNode, low: ExprNode, high: ExprNode, negated: bool = False):
         super().__init__()
-        self.var = var
-        self.val = val
+        self.expr = expr
+        self.low = low
+        self.high = high
+        self.negated = negated
 
     @property
-    def childs(self) -> Tuple[ExprNode, ExprNode]:
-        return self.var, self.val
+    def childs(self) -> Tuple[ExprNode, ExprNode, ExprNode]:
+        return self.expr, self.low, self.high
 
-    def __str__(self)->str:
-        return '='
+    def __str__(self) -> str:
+        return 'NOT BETWEEN' if self.negated else 'BETWEEN'
 
 
-class VarsDeclNode(StmtNode):
-    def __init__(self, type: IdentNode, *vars: ExprNode):
+class InNode(ExprNode):
+    def __init__(self, expr: ExprNode, elements: List[ExprNode], negated: bool = False):
         super().__init__()
-        self.type = type
-        self.vars = vars
+        self.expr = expr
+        self.elements = elements
+        self.negated = negated
+
+    @property
+    def childs(self) -> Tuple[ExprNode, ...]:
+        return (self.expr,) + tuple(self.elements)
+
+    def __str__(self) -> str:
+        return 'NOT IN' if self.negated else 'IN'
+
+
+class IsNullNode(ExprNode):
+    def __init__(self, expr: ExprNode, negated: bool = False):
+        super().__init__()
+        self.expr = expr
+        self.negated = negated
 
     @property
     def childs(self) -> Tuple[ExprNode]:
-        return self.vars
+        return self.expr,
 
     def __str__(self) -> str:
-        return str(self.type)
+        return 'IS NOT NULL' if self.negated else 'IS NULL'
 
 
-class CallNode(ExprNode, StmtNode):
-    def __init__(self, name: IdentNode, *params: ExprNode):
+# subqueries
+class SubQueryNode(ExprNode):
+    def __init__(self, query: 'SelectStmtNode'):
+        super().__init__()
+        self.query = query
+
+    @property
+    def childs(self) -> Tuple['SelectStmtNode', ...]:
+        return self.query,
+
+    def __str__(self) -> str:
+        return 'EXISTS'
+
+
+# select
+class SelectItemNode(AstNode):
+    def __init__(self, expr: ExprNode, alias: Optional[str] = None):
+        super().__init__()
+        self.expr = expr
+        self.alias = alias
+
+    @property
+    def childs(self) -> Tuple[ExprNode]:
+        return self.expr,
+
+    def __str__(self):
+        if self.alias:
+            return f"{self.expr} AS {self.alias}"
+        return str(self.expr)
+
+
+class TableBaseNode(AstNode):
+    def __init__(self, name: str, alias: Optional[str] = None):
         super().__init__()
         self.name = name
-        self.params = params
+        self.alias = alias
+
+    def __str__(self) -> str:
+        if self.alias:
+            return f"{self.name} AS {self.alias}"
+        return self.name
+
+
+class TableSubqueryNode(AstNode):
+    def __init__(self, query: 'SelectStmtNode', alias: Optional[str] = None):
+        super().__init__()
+        self.query = query
+        self.alias = alias
+
+    @property
+    def childs(self) -> Tuple['SelectStmtNode']:
+        return self.query,
+
+    def __str__(self) -> str:
+        if self.alias:
+            return f"(subquery) AS {self.alias}"
+        return "(subquery)"
+
+
+class JoinNode(AstNode):
+    def __init__(self, join_type: str, table: AstNode, condition: Optional[ExprNode] = None):
+        super().__init__()
+        self.join_type = join_type
+        self.table = table
+        self.condition = condition
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        if self.condition:
+            return self.table, self.condition
+        return self.table,
+
+    def __str__(self) -> str:
+        return self.join_type
+
+
+class SelectCoreNode(StmtNode):
+    def __init__(self,
+                 distinct: bool,
+                 select_list: List[SelectItemNode],
+                 from_tables: Optional[List[AstNode]] = None,
+                 where_clause: Optional[AstNode] = None,
+                 group_by: Optional[List[ExprNode]] = None,
+                 having_clause: Optional[ExprNode] = None):
+        super().__init__()
+        self.distinct = distinct
+        self.select_list = select_list
+        self.from_tables = from_tables or []
+        self.where_clause = where_clause
+        self.group_by = group_by or []
+        self.having_clause = having_clause
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        children = []
+        children.extend(self.select_list)
+        children.extend(self.from_tables)
+        if self.where_clause:
+            children.append(self.where_clause)
+        children.extend(self.group_by)
+        if self.having_clause:
+            children.append(self.having_clause)
+        return tuple(children)
+
+    def __str__(self) -> str:
+        base = 'SELECT'
+        if self.distinct:
+            base += ' DISTINCT'
+        return base
+
+
+class OrderingTermNode(AstNode):
+    def __init__(self, expr: ExprNode, direction: str = 'ASC'):
+        super().__init__()
+        self.expr = expr
+        self.direction = direction  # 'ASC' или 'DESC'
 
     @property
     def childs(self) -> Tuple[ExprNode]:
-        return self.params
+        return self.expr,
 
     def __str__(self) -> str:
-        return f'{self.name}()'
+        return f"{self.expr} {self.direction}"
 
 
-class IfNode(StmtNode):
-    def __init__(self, cond: ExprNode, thenStmt: StmtNode, elseStmt: StmtNode = None):
+class LimitOffsetNode(AstNode):
+    def __init__(self, limit: ExprNode, offset: Optional[ExprNode] = None):
         super().__init__()
-        self.cond = cond
-        self.thenStmt = thenStmt or StmtListNode()
-        self.elseStmt = elseStmt
+        self.limit = limit
+        self.offset = offset
 
     @property
-    def childs(self) -> Tuple[ExprNode, StmtNode, Optional[ExprNode]]:
-        return self.cond, self.thenStmt, *([self.elseStmt] if self.elseStmt else [])
+    def childs(self) -> Tuple[ExprNode, ...]:
+        if self.offset:
+            return self.limit, self.offset
+        return self.limit,
 
     def __str__(self) -> str:
-        return 'if'
+        result = f"LIMIT {self.limit}"
+        if self.offset:
+            result += f" OFFSET {self.offset}"
+        return result
 
-
-class WhileNode(StmtNode):
-    def __init__(self, cond: ExprNode, body: StmtNode):
+class SelectStmtNode(StmtNode):
+    def __init__(self,
+                 core: SelectCoreNode,
+                 order_by: Optional[List[OrderingTermNode]] = None,
+                 limit_offset: Optional[LimitOffsetNode] = None):
         super().__init__()
-        self.cond = cond
-        self.body = body or StmtListNode()
+        self.core = core
+        self.order_by = order_by or []
+        self.limit_offset = limit_offset
 
     @property
-    def childs(self) -> Tuple[ExprNode, StmtNode]:
-        return self.cond, self.body
+    def childs(self) -> Tuple[AstNode, ...]:
+        children = [self.core]
+        if self.order_by:
+            children.extend(self.order_by)
+        if self.limit_offset:
+            children.append(self.limit_offset)
+        return tuple(children)
 
     def __str__(self) -> str:
-        return 'while'
-
-
-class ForNode(StmtNode):
-    def __init__(self, init: StmtNode, cond: ExprNode, next: StmtNode, body: StmtNode):
-        super().__init__()
-        self.init = init or StmtListNode()
-        self.cond = cond or NumNode(1)
-        self.next = next or StmtListNode()
-        self.body = body or StmtListNode()
-
-    @property
-    def childs(self) -> Tuple[StmtNode, ExprNode, StmtNode, StmtNode]:
-        return self.init, self.cond, self.next, self.body
-
-    def __str__(self) -> str:
-        return 'for'
-
-
-class BreakNode(StmtNode):
-    def __str__(self) -> str:
-        return 'break'
-
-
-class ContinueNode(StmtNode):
-    def __str__(self) -> str:
-        return 'continue'
-
-
-class ReturnNode(StmtNode):
-    def __init__(self, value: Optional[ExprNode] = None):
-        super().__init__()
-        self.value = value
-
-    @property
-    def childs(self) -> Tuple[ExprNode]:
-        return (self.value,) if self.value else ()
-
-    def __str__(self) -> str:
-        return 'return'
-
+        return 'SELECT STATEMENT'
 
 class StmtListNode(StmtNode):
+    """Список операторов (для блоков)"""
     def __init__(self, *stmts: StmtNode):
         super().__init__()
         self.stmts = stmts
@@ -252,23 +390,5 @@ class StmtListNode(StmtNode):
     def childs(self) -> Tuple[StmtNode]:
         return self.stmts
 
-    def __str__(self)->str:
-        return '...'
-
-
-class FuncNode(StmtNode):
-    def __init__(self, type: IdentNode, name: IdentNode, params: List[VarsDeclNode],
-                 body: StmtNode):
-        super().__init__()
-        self.type = type
-        self.name = name
-        self.params = params
-        self.body = body
-
-    @property
-    def childs(self) -> Tuple[StmtNode]:
-        return self.body,
-
     def __str__(self) -> str:
-        params = ', '.join(f'{p.type} {p.vars[0]}' for p in self.params)
-        return f'{self.type} {self.name}({params})'
+        return '...'
