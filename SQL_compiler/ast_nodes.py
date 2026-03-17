@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Tuple, Optional, List, Any
+from typing import Callable, Tuple, Optional, List
 from enum import Enum
 
 
@@ -100,7 +100,7 @@ class CompoundIdentNode(ExprNode):
         return tuple(IdentNode(part) for part in self.parts)
 
     def __str__(self) -> str:
-        return self.full_name
+        return ""
 
 
 class StarNode(ExprNode):
