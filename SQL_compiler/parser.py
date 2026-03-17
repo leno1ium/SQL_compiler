@@ -172,14 +172,15 @@ class SQLASTBuilder(Transformer):
                 tables.extend(arg)
             else:
                 tables.append(arg)
-        return tables
+        return FromNode(tables)
 
     def join_clause(self, args):
         # join_type? JOIN table_primary (ON expr)?
         if len(args) == 3:  # JOIN table_primary
             return JoinNode('JOIN', args[1], None)
         elif len(args) == 4:  # JOIN table_primary ON expr
-            return JoinNode('JOIN', args[1], args[3])
+            on_node = OnNode(args[3])
+            return JoinNode('JOIN', args[1], on_node)
         elif len(args) == 5:  # INNER JOIN table_primary ON expr
             return JoinNode(args[0], args[2], args[4])
         else:  # INNER JOIN table_primary
@@ -218,20 +219,19 @@ class SQLASTBuilder(Transformer):
         select_list = args[i]
         i += 1
 
-        from_tables = None
+        from_node = None
         where_clause = None
         group_by = []
         having_clause = None
 
         while i < len(args):
             if args[i] == 'FROM':
-                from_tables = args[i + 1]
+                from_node = args[i + 1]
                 i += 2
             elif args[i] == 'WHERE':
                 where_clause = args[i + 1]
                 i += 2
             elif args[i] == 'GROUP':
-                # GROUP BY expr (COMMA expr)*
                 i += 2  # пропускаем GROUP и BY
                 group_by = []
                 while i < len(args) and args[i] != 'HAVING':
@@ -244,8 +244,7 @@ class SQLASTBuilder(Transformer):
             else:
                 i += 1
 
-        return SelectCoreNode(distinct, select_list, from_tables,
-                              where_clause, group_by, having_clause)
+        return SelectCoreNode(distinct, select_list, from_node, where_clause, group_by, having_clause)
 
     def ordering_term(self, args):
         expr = args[0]

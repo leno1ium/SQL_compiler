@@ -7,9 +7,7 @@ def main():
     # prog = parser.parse(prog)
     # print(*prog.tree, sep=os.linesep)
     parser.print_ast("""
-    SELECT u.name, o.total 
-    FROM users u 
-    JOIN orders o ON u.id = o.user_id
+    SELECT name, age FROM users WHERE age >= 18;
     """)
 
 

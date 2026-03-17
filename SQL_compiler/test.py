@@ -1,37 +1,58 @@
-# test_grammar.py
-from pathlib import Path
-from lark import Lark
+from parser import print_ast
 
-# Загружаем грамматику
-grammar_path = Path(__file__).parent / 'parser.lark'
-grammar = grammar_path.read_text(encoding='utf-8')
+tests = [
 
-print("Проверка грамматики...")
-try:
-    # Пробуем создать парсер
-    parser = Lark(grammar, start="start", parser="lalr")
-    print("✅ Грамматика корректна!")
+    "SELECT * FROM users;",
+    "SELECT id, name FROM users;",
+    "SELECT name AS user_name FROM users;",
+    "SELECT DISTINCT city FROM users;",
 
-    # Тестовые запросы
-    test_queries = [
-        "SELECT * FROM users",
-        "SELECT id, name FROM users WHERE age > 18",
-        "SELECT name FROM users WHERE email LIKE '%test%'",
-        "SELECT city FROM users WHERE city IN ('Moscow', 'SPB')",
-    ]
+    # 2. WHERE операторы
+    "SELECT name FROM users WHERE age > 25;",
+    "SELECT name FROM users WHERE age >= 18;",
+    "SELECT name FROM users WHERE age = 30;",
+    "SELECT name FROM users WHERE age != 25;",
 
-    for query in test_queries:
-        try:
-            tree = parser.parse(query)
-            print(f"✅ Успешно разобрано: {query[:30]}...")
-        except Exception as e:
-            print(f"❌ Ошибка в запросе '{query}': {e}")
+    # 3. LIKE
+    "SELECT name FROM users WHERE name LIKE 'A%';",
+    "SELECT name FROM users WHERE name NOT LIKE '%x%';",
 
-except Exception as e:
-    print(f"❌ Ошибка в грамматике: {e}")
+    # 4. IN
+    "SELECT name FROM users WHERE city IN ('Moscow', 'SPB');",
+    "SELECT name FROM users WHERE city NOT IN ('Moscow', 'SPB');",
 
-    # Выводим проблемную строку
-    lines = grammar.split('\n')
-    for i, line in enumerate(lines, 1):
-        if '(' in line and not line.strip().startswith('//'):
-            print(f"Строка {i}: {line}")
+    # 5. BETWEEN
+    "SELECT name FROM users WHERE age BETWEEN 18 AND 65;",
+    "SELECT name FROM users WHERE age NOT BETWEEN 18 AND 65;",
+
+    # 6. IS NULL
+    "SELECT name FROM users WHERE email IS NULL;",
+    "SELECT name FROM users WHERE email IS NOT NULL;",
+
+    # 7. AND/OR
+    "SELECT name FROM users WHERE age > 18 AND city = 'Moscow';",
+    "SELECT name FROM users WHERE age > 18 OR city = 'Moscow';",
+
+    # 8. JOIN
+    "SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id;",
+    "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id;",
+    "SELECT u.name FROM users u RIGHT JOIN orders o ON u.id = o.user_id;",
+    "SELECT u.name, p.name FROM users u CROSS JOIN products p;",
+
+    # 9. GROUP BY
+    "SELECT city, COUNT(*) FROM users GROUP BY city;",
+    "SELECT city, COUNT(*) FROM users GROUP BY city HAVING COUNT(*) > 5;",
+
+    # 10. ORDER BY и LIMIT
+    "SELECT name FROM users ORDER BY age;",
+    "SELECT name FROM users ORDER BY age DESC;",
+    "SELECT name FROM users ORDER BY age DESC, name ASC;",
+    "SELECT name FROM users LIMIT 10;",
+    "SELECT name FROM users LIMIT 10 OFFSET 5;",
+]
+
+for i, test in enumerate(tests, 1):
+    print(f"\n{'=' * 60}")
+    print(f"ТЕСТ {i}: {test}")
+    print(f"{'=' * 60}")
+    print_ast(test)
