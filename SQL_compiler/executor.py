@@ -12,10 +12,6 @@ class QueryExecutor:
     """
 
     def __init__(self, tables: Dict[str, Table]):
-        """
-        Args:
-            tables: Словарь таблиц {имя_таблицы: Table}
-        """
         self.tables = tables
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
@@ -45,27 +41,22 @@ class QueryExecutor:
             context = RowContext(table, row)
             context.row_index = row_idx
 
-            # Проверяем условие WHERE
             if not self._check_where(stmt.core.where_clause, context):
                 continue
 
-            # Выбираем нужные колонки (SELECT)
             selected_row = self._project_row(stmt.core.select_list, context)
             result_rows.append(selected_row)
 
         print(f"  Найдено строк: {len(result_rows)} из {len(table)}")
 
-        # Применяем DISTINCT если нужно
         if stmt.core.distinct:
             result_rows = self._apply_distinct(result_rows)
             print(f"  После DISTINCT: {len(result_rows)} уникальных строк")
 
-        # Применяем ORDER BY
         if stmt.order_by:
             result_rows = self._apply_order_by(result_rows, stmt.order_by, table)
             print(f"  Применена сортировка")
 
-        # Применяем LIMIT/OFFSET
         if stmt.limit_offset:
             result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
             print(f"  Применены LIMIT/OFFSET")
@@ -85,7 +76,6 @@ class QueryExecutor:
         if from_node is None or not from_node.tables:
             return None
 
-        # Упрощенно: берем первую таблицу из списка
         # TODO: поддержка JOIN и подзапросов
         first_table = from_node.tables[0]
 
@@ -133,17 +123,15 @@ class QueryExecutor:
         evaluator = ExpressionEvaluator(context)
 
         for item in select_list:
-            # SELECT * - все колонки
+
             if isinstance(item.expr, StarNode):
                 for col in context.table.column_names:
                     result[col] = context.get_value(col)
                 continue
 
-            # Обычная колонка или выражение
             try:
                 value = evaluator.evaluate(item.expr)
 
-                # Определяем имя колонки в результате
                 if item.alias:
                     name = item.alias
                 elif isinstance(item.expr, IdentNode):
@@ -176,7 +164,6 @@ class QueryExecutor:
         seen = set()
 
         for row in rows:
-            # Преобразуем в кортеж для хеширования
             row_tuple = tuple(sorted(row.items()))
             if row_tuple not in seen:
                 seen.add(row_tuple)
@@ -212,7 +199,6 @@ class QueryExecutor:
                     key.append(None)
             return tuple(key)
 
-        # Определяем направление сортировки
         reverse = any(term.direction == 'DESC' for term in order_by)
 
         try:
@@ -233,7 +219,7 @@ class QueryExecutor:
         Returns:
             Ограниченный набор строк
         """
-        # Вычисляем limit и offset
+
         evaluator = ExpressionEvaluator(None)
 
         try:

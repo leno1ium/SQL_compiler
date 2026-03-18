@@ -50,9 +50,3 @@ tests = [
     "SELECT name FROM users LIMIT 10;",
     "SELECT name FROM users LIMIT 10 OFFSET 5;",
 ]
-
-for i, test in enumerate(tests, 1):
-    print(f"\n{'=' * 60}")
-    print(f"ТЕСТ {i}: {test}")
-    print(f"{'=' * 60}")
-    print_ast(test)
