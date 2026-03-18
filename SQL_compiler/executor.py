@@ -46,19 +46,19 @@ class QueryExecutor:
             selected_row = self._project_row(stmt.core.select_list, context)
             result_rows.append(selected_row)
 
-        print(f"  Найдено строк: {len(result_rows)} из {len(table)}")
+        print(f"Найдено строк: {len(result_rows)} из {len(table)}")
 
         if stmt.core.distinct:
             result_rows = self._apply_distinct(result_rows)
-            print(f"  После DISTINCT: {len(result_rows)} уникальных строк")
+            print(f"После DISTINCT: {len(result_rows)} уникальных строк")
 
         if stmt.order_by:
             result_rows = self._apply_order_by(result_rows, stmt.order_by, table)
-            print(f"  Применена сортировка")
+            print(f"Применена сортировка")
 
         if stmt.limit_offset:
             result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
-            print(f"  Применены LIMIT/OFFSET")
+            print(f"Применены LIMIT/OFFSET")
 
         return result_rows
 

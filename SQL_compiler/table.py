@@ -79,23 +79,20 @@ class Table:
             example_str = ", ".join(examples) if examples else "(нет данных)"
             print(f"{col:<20} {type_name:<15} {example_str:<30}")
 
-    def print_data(self, limit: int = 10) -> None:
-        print(f"\nДанные таблицы {self.name} (первые {limit} строк):")
+    def print_data(self) -> None:
+        print(f"\nДанные таблицы {self.name}:")
         print("-" * 80)
 
         header = " | ".join(f"{col:<15}" for col in self.column_names)
         print(header)
         print("-" * 80)
 
-        for i, row in enumerate(self.rows[:limit]):
+        for i, row in enumerate(self.rows):
             row_str = " | ".join(
                 f"{str(row.get(col, 'NULL')):<15}"
                 for col in self.column_names
             )
             print(row_str)
-
-        if len(self.rows) > limit:
-            print(f"... и еще {len(self.rows) - limit} строк")
 
 
 class ExcelLoader:
