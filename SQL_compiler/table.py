@@ -1,4 +1,3 @@
-# table.py
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path

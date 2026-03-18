@@ -1,4 +1,3 @@
-# execution_context.py
 from typing import Dict, Any, Optional
 from table import Table
 from ast_nodes import *
@@ -22,17 +21,14 @@ class RowContext:
         self.row_index = -1  # Будет установлено при итерации
 
     def get_value(self, column_name: str) -> Any:
-        """Получить значение колонки для текущей строки"""
         if column_name not in self.row:
             raise KeyError(f"Column '{column_name}' not found in row")
         return self.row.get(column_name)
 
     def get_type(self, column_name: str) -> type:
-        """Получить тип колонки"""
         return self.table.get_column_type(column_name)
 
     def has_column(self, column_name: str) -> bool:
-        """Проверить, существует ли колонка"""
         return column_name in self.row
 
 
@@ -62,7 +58,6 @@ class ExpressionEvaluator:
         if node is None:
             return None
 
-        # Литералы
         if isinstance(node, NumNode):
             return node.num
 
@@ -128,7 +123,6 @@ class ExpressionEvaluator:
             result = (value is None)
             return not result if node.negated else result
 
-        # Подзапросы (упрощенно)
         elif isinstance(node, SubQueryNode):
             # TODO: реализовать поддержку подзапросов
             raise NotImplementedError("Subqueries not yet supported")
@@ -144,7 +138,6 @@ class ExpressionEvaluator:
             raise NotImplementedError(f"Evaluation not implemented for {type(node)}")
 
     def _evaluate_unary(self, op: UnOp, arg: Any) -> Any:
-        """Вычислить унарную операцию"""
         if op == UnOp.PLUS:
             return +self._to_number(arg)
         elif op == UnOp.MINUS:
@@ -155,7 +148,6 @@ class ExpressionEvaluator:
             raise ValueError(f"Unknown unary operator: {op}")
 
     def _evaluate_binary(self, op: BinOp, left: Any, right: Any) -> Any:
-        """Вычислить бинарную операцию"""
 
         # Арифметические операции
         if op in (BinOp.ADD, BinOp.SUB, BinOp.MUL, BinOp.DIV, BinOp.REM):
@@ -211,7 +203,6 @@ class ExpressionEvaluator:
 
             import re
             pattern = str(right)
-            # Преобразуем SQL LIKE в regex
             pattern = pattern.replace('%', '.*').replace('_', '.')
             pattern = f"^{pattern}$"
 
@@ -225,7 +216,6 @@ class ExpressionEvaluator:
             raise ValueError(f"Unknown binary operator: {op}")
 
     def _to_number(self, value: Any) -> float:
-        """Преобразовать значение в число"""
         if value is None:
             return 0.0
         if isinstance(value, (int, float)):
@@ -238,7 +228,6 @@ class ExpressionEvaluator:
             return 0.0
 
     def _to_bool(self, value: Any) -> bool:
-        """Преобразовать значение в булево"""
         if value is None:
             return False
         if isinstance(value, bool):

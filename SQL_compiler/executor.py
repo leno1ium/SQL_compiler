@@ -1,4 +1,3 @@
-# executor.py
 from typing import List, Dict, Any, Optional
 from table import Table
 from execution_context import RowContext, ExpressionEvaluator
