@@ -7,9 +7,6 @@ import os
 
 
 def load_excel_file() -> Path:
-    print("\n" + "=" * 80)
-    print("ЗАГРУЗКА EXCEL ФАЙЛА")
-    print("=" * 80)
 
     while True:
         print("\nВыберите действие:")
@@ -151,23 +148,6 @@ def create_sample_excel() -> Path:
     wb.save(filepath)
 
     print(f"Создан тестовый Excel файл: {filepath.absolute()}")
-    print(f"\nСозданы таблицы:")
-    print(f"   • users - {len(users_data)} пользователей")
-    print(f"     - id, name, age, email, city")
-    print(f"     - Возраст: от 19 до 55")
-    print(f"     - Города: Moscow, SPB, Kazan")
-    print(f"     - 2 пользователя с NULL email")
-
-    print(f"\n   • orders - {len(orders_data)} заказов")
-    print(f"     - id, user_id, product_id, total, order_date")
-    print(f"     - Суммы: от 800.75 до 2500.00")
-
-    print(f"\n   • products - {len(products_data)} продуктов")
-    print(f"     - id, name, price, category")
-    print(f"     - Категории: Electronics, Accessories")
-
-    print(f"\n   • sales - {len(sales_data)} продаж")
-    print(f"     - id, product_name, category, amount, sale_date")
 
     return filepath
 
@@ -248,7 +228,6 @@ def run_test(executor: QueryExecutor, sql: str, description: str):
 
         result = executor.execute(ast)
 
-        print(f"\nРЕЗУЛЬТАТ ({len(result)} строк):")
         if result:
             headers = list(result[0].keys())
 
@@ -270,7 +249,7 @@ def run_test(executor: QueryExecutor, sql: str, description: str):
             if len(result) > 20:
                 print(f"... и еще {len(result) - 20} строк")
         else:
-            print("   Нет данных, удовлетворяющих условию")
+            print("Нет данных, удовлетворяющих условию")
 
     except Exception as e:
         print(f"Ошибка: {e}")
@@ -322,7 +301,6 @@ def load_tests_from_file() -> list:
 
         if hasattr(test_module, 'tests'):
             tests_from_file = test_module.tests
-            print(f"\nЗагружено {len(tests_from_file)} тестов из test.py")
 
             for i, sql in enumerate(tests_from_file, 1):
                 clean_sql = sql.strip().rstrip(';')
@@ -348,23 +326,15 @@ def load_tests_from_file() -> list:
 
 
 def main():
-    print("=" * 80)
-    print("SQL ИНТЕРПРЕТАТОР - Обработчик данных")
-    print("=" * 80)
 
     excel_file = load_excel_file()
-
-    print("\nЗагрузка данных из Excel...")
     loader = ExcelLoader()
 
     try:
         tables = loader.load(excel_file)
-        print(f"\nЗагружено таблиц: {len(tables)}")
 
         for name, table in tables.items():
             print_full_table(table, f"ТАБЛИЦА: {name}")
-
-        verify_test_data(tables)
 
     except Exception as e:
         print(f"Ошибка загрузки Excel: {e}")
@@ -378,16 +348,8 @@ def main():
         print("\nНет тестов для выполнения. Добавьте тесты в tests.py")
         return
 
-    print("\n" + "=" * 80)
-    print(f"ЗАПУСК ТЕСТОВ ({len(tests)} шт.)")
-    print("=" * 80)
-
     for sql, description in tests:
         run_test(executor, sql, description)
-
-    print("\n" + "=" * 80)
-    print("Все тесты завершены!")
-    print("=" * 80)
 
 
 if __name__ == "__main__":
