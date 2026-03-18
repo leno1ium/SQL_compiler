@@ -236,7 +236,6 @@ class QueryExecutor:
             except:
                 offset = 0
 
-        # Применяем
         start = min(offset, len(rows))
         end = min(start + limit, len(rows))
 
