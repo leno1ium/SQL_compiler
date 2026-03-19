@@ -10,7 +10,10 @@ parser = Lark(grammar, start="start", parser="lalr")
 class SQLASTBuilder(Transformer):
     """Построитель AST для SQL SELECT запросов"""
 
-    # ============== БАЗОВЫЕ ТИПЫ ==============
+    def _is_node(self, obj):
+        """Проверка, является ли объект узлом AST"""
+        return hasattr(obj, 'tree')
+
     def num(self, args):
         return NumNode(args[0])
 
@@ -24,32 +27,35 @@ class SQLASTBuilder(Transformer):
         return NullNode()
 
     def distinct(self, args):
-        return args[0]  # просто возвращаем DISTINCT
+        return args[0]
 
-    # ============== ИДЕНТИФИКАТОРЫ ==============
     def simple_ident(self, args):
         return IdentNode(args[0])
 
     def compound_ident(self, args):
-        # args может быть [simple_ident] или [compound_ident, DOT, IDENT]
+        """Обработка составных идентификаторов"""
+        # args может быть: [simple_ident] или [compound_ident, DOT, IDENT]
         if len(args) == 1:
-            # Это результат рекурсии
             return args[0]
         else:
-            # Собираем составной идентификатор
-            if isinstance(args[0], CompoundIdentNode):
-                parts = args[0].parts + [args[2]]
-            elif isinstance(args[0], IdentNode):
-                parts = [args[0].name, args[2]]
+            # Получаем левую часть (может быть IdentNode или CompoundIdentNode)
+            left = args[0]
+            right = args[2]  # IDENT
+
+            if isinstance(left, CompoundIdentNode):
+                parts = left.parts + [right]
+            elif isinstance(left, IdentNode):
+                parts = [left.name, right]
             else:
-                parts = [str(args[0]), str(args[2])]
+                # Если left - это строка или Token
+                parts = [str(left), right]
+
             return CompoundIdentNode(parts)
 
     def ident(self, args):
         # ident: compound_ident | simple_ident
         return args[0]
 
-    # ============== УНАРНЫЕ ОПЕРАТОРЫ ==============
     def plus(self, args):
         return UnOpNode(UnOp.PLUS, args[0])
 
@@ -65,7 +71,6 @@ class SQLASTBuilder(Transformer):
     def is_not_null(self, args):
         return IsNullNode(args[0], negated=True)
 
-    # ============== БИНАРНЫЕ ОПЕРАТОРЫ ==============
     def mul(self, args):
         return BinOpNode(BinOp.MUL, args[0], args[1])
 
@@ -99,7 +104,36 @@ class SQLASTBuilder(Transformer):
     def ne(self, args):
         return BinOpNode(BinOp.NE, args[0], args[1])
 
-    # ============== SQL ОПЕРАТОРЫ ==============
+    def and_expr(self, args):
+        """AND оператор - обрабатывает цепочки AND"""
+        if len(args) == 1:
+            return args[0]
+        # Ищем все части с AND
+        result = args[0]
+        i = 1
+        while i < len(args):
+            if args[i] == 'AND':
+                result = BinOpNode(BinOp.AND, result, args[i + 1])
+                i += 2
+            else:
+                i += 1
+        return result
+
+    def or_expr(self, args):
+        """OR оператор - обрабатывает цепочки OR"""
+        if len(args) == 1:
+            return args[0]
+        # Ищем все части с OR
+        result = args[0]
+        i = 1
+        while i < len(args):
+            if args[i] == 'OR':
+                result = BinOpNode(BinOp.OR, result, args[i + 1])
+                i += 2
+            else:
+                i += 1
+        return result
+
     def like(self, args):
         return BinOpNode(BinOp.LIKE, args[0], args[1])
 
@@ -107,27 +141,61 @@ class SQLASTBuilder(Transformer):
         return BinOpNode(BinOp.NOT_LIKE, args[0], args[1])
 
     def in_expr(self, args):
-        # args: [like_expr, IN, LPAREN, elements..., RPAREN]
-        expr = args[0]
-        elements = [arg for arg in args[3:-1] if not isinstance(arg, str)]
-        return InNode(expr, elements, negated=False)
+        """Обработка IN выражения"""
+        # args: [is_expr, IN, LPAREN, expr_list, RPAREN] или [is_expr, NOT, IN, LPAREN, expr_list, RPAREN]
+        if args[1] == 'NOT':
+            expr = args[0]
+            elements = args[4] if isinstance(args[4], list) else [args[4]]
+            return InNode(expr, elements, negated=True)
+        else:
+            expr = args[0]
+            elements = args[3] if isinstance(args[3], list) else [args[3]]
+            return InNode(expr, elements, negated=False)
 
     def not_in(self, args):
+        """Обработка NOT IN выражения (альтернативный вариант)"""
         expr = args[0]
-        elements = [arg for arg in args[4:-1] if not isinstance(arg, str)]
+        elements = args[4] if isinstance(args[4], list) else [args[4]]
         return InNode(expr, elements, negated=True)
 
     def between(self, args):
+        """Обработка BETWEEN выражения"""
         # args: [in_expr, BETWEEN, in_expr, AND, in_expr]
         return BetweenNode(args[0], args[2], args[4], negated=False)
 
     def not_between(self, args):
+        """Обработка NOT BETWEEN выражения"""
+        # args: [in_expr, NOT, BETWEEN, in_expr, AND, in_expr]
         return BetweenNode(args[0], args[3], args[5], negated=True)
+
+    def expr_list(self, args):
+        """Обработка списка выражений"""
+        result = []
+        for arg in args:
+            if hasattr(arg, 'tree'):
+                result.append(arg)
+            elif arg != ',':
+                # Может быть выражение без запятой
+                if hasattr(arg, 'tree'):
+                    result.append(arg)
+        return result
 
     def exists_subquery(self, args):
         return SubQueryNode(args[2])  # EXISTS LPAREN select_stmt RPAREN
 
-    # ============== SELECT КОНСТРУКЦИИ ==============
+    def function_call(self, args):
+        """Вызов функции: COUNT(*), SUM(price), etc."""
+        # args: [IDENT, LPAREN, ...args..., RPAREN]
+        func_name = args[0]
+        func_args = []
+
+        # Собираем аргументы между LPAREN и RPAREN
+        for arg in args[2:-1]:  # пропускаем IDENT, LPAREN и последний RPAREN
+            if not isinstance(arg, str) and not hasattr(arg, 'type'):
+                func_args.append(arg)
+
+        return FuncCallNode(func_name, func_args)
+
     def select_item(self, args):
         if len(args) == 1:
             return SelectItemNode(args[0], None)
@@ -143,7 +211,12 @@ class SQLASTBuilder(Transformer):
         return SelectItemNode(StarNode(), None)
 
     def select_list(self, args):
-        return [arg for arg in args if not isinstance(arg, str)]
+        """Список элементов SELECT"""
+        result = []
+        for arg in args:
+            if self._is_node(arg):
+                result.append(arg)
+        return result
 
     def table_base(self, args):
         name = args[0]
@@ -202,53 +275,10 @@ class SQLASTBuilder(Transformer):
     def cross_join(self, args):
         return 'CROSS JOIN'
 
-    def select_core(self, args):
-        distinct = False
-        i = 0
-
-        # SELECT
-        if args[i] == 'SELECT':
-            i += 1
-
-        # DISTINCT?
-        if i < len(args) and args[i] == 'DISTINCT':
-            distinct = True
-            i += 1
-
-        # select_list
-        select_list = args[i]
-        i += 1
-
-        from_node = None
-        where_clause = None
-        group_by = []
-        having_clause = None
-
-        while i < len(args):
-            if args[i] == 'FROM':
-                from_node = args[i + 1]
-                i += 2
-            elif args[i] == 'WHERE':
-                where_clause = args[i + 1]
-                i += 2
-            elif args[i] == 'GROUP':
-                i += 2  # пропускаем GROUP и BY
-                group_by = []
-                while i < len(args) and args[i] != 'HAVING':
-                    if not isinstance(args[i], str):
-                        group_by.append(args[i])
-                    i += 1
-            elif args[i] == 'HAVING':
-                having_clause = args[i + 1]
-                i += 2
-            else:
-                i += 1
-
-        return SelectCoreNode(distinct, select_list, from_node, where_clause, group_by, having_clause)
-
     def ordering_term(self, args):
+        """Термин сортировки: expr (ASC | DESC)?"""
         expr = args[0]
-        direction = args[1] if len(args) > 1 else 'ASC'
+        direction = args[1] if len(args) > 1 and args[1] in ('ASC', 'DESC') else 'ASC'
         return OrderingTermNode(expr, direction)
 
     def order_by(self, args):
@@ -266,24 +296,106 @@ class SQLASTBuilder(Transformer):
         return LimitOffsetNode(limit, offset)
 
     def select_stmt(self, args):
-        core = args[0]
-        order_by = None
+        """Единый узел для всего SELECT запроса"""
+        distinct = False
+        select_list = None
+        from_node = None
+        where_clause = None
+        group_by = []
+        having_clause = None
+        order_by = []
         limit_offset = None
 
-        for arg in args[1:]:
-            if isinstance(arg, list) and arg and isinstance(arg[0], OrderingTermNode):
-                order_by = arg
-            elif isinstance(arg, LimitOffsetNode):
-                limit_offset = arg
+        i = 0
 
-        return SelectStmtNode(core, order_by or [], limit_offset)
+        # SELECT
+        if args[i] == 'SELECT':
+            i += 1
 
-    # ============== ВСПОМОГАТЕЛЬНЫЕ ==============
+        # DISTINCT?
+        if i < len(args) and args[i] == 'DISTINCT':
+            distinct = True
+            i += 1
+
+        # select_list
+        if i < len(args) and isinstance(args[i], list):
+            select_list = args[i]
+        i += 1
+
+        while i < len(args):
+            current = args[i]
+
+            if isinstance(current, str):
+                if current == 'FROM':
+                    if i + 1 < len(args) and hasattr(args[i + 1], 'tree'):
+                        from_node = args[i + 1]
+                    i += 2
+                elif current == 'WHERE':
+                    if i + 1 < len(args) and hasattr(args[i + 1], 'tree'):
+                        where_clause = args[i + 1]
+                    i += 2
+                elif current == 'GROUP':
+                    i += 2  # пропускаем GROUP и BY
+                    if i < len(args) and isinstance(args[i], list):
+                        group_by = args[i]
+                        i += 1
+                    else:
+                        while i < len(args) and not isinstance(args[i], str):
+                            if hasattr(args[i], 'tree'):
+                                group_by.append(args[i])
+                            i += 1
+                elif current == 'HAVING':
+                    if i + 1 < len(args) and hasattr(args[i + 1], 'tree'):
+                        having_clause = args[i + 1]
+                    i += 2
+                elif current == 'ORDER':
+                    i += 2  # пропускаем ORDER и BY
+                    # Собираем термины ORDER BY
+                    while i < len(args) and not isinstance(args[i], str):
+                        if hasattr(args[i], 'tree'):
+                            order_by.append(args[i])
+                        i += 1
+                elif current == 'LIMIT':
+                    limit = None
+                    offset = None
+
+                    if i + 1 < len(args) and hasattr(args[i + 1], 'tree'):
+                        limit = args[i + 1]
+
+                    if i + 2 < len(args) and args[i + 2] == 'OFFSET':
+                        if i + 3 < len(args) and hasattr(args[i + 3], 'tree'):
+                            offset = args[i + 3]
+                        i += 4
+                    else:
+                        i += 2
+
+                    if limit:
+                        limit_offset = LimitOffsetNode(limit, offset)
+                else:
+                    i += 1
+            else:
+                i += 1
+
+        # Создаем узел SELECT
+        return SelectStmtNode(
+            distinct=distinct,
+            select_list=select_list if isinstance(select_list, list) else [],
+            from_node=from_node,
+            where_clause=where_clause,
+            group_by=group_by,
+            having_clause=having_clause,
+            order_by=order_by,
+            limit_offset=limit_offset
+        )
+
     def __default__(self, data, children, meta):
-        """Обработка неизвестных правил (терминалы)"""
-        if len(children) == 1:
+        """Обработка неизвестных правил"""
+        if len(children) == 1 and hasattr(children[0], 'tree'):
             return children[0]
-        return children
+        elif len(children) == 1:
+            return None
+        # Фильтруем только AST узлы
+        return [child for child in children if hasattr(child, 'tree')]
 
 
 def parse(sql_query: str) -> SelectStmtNode:

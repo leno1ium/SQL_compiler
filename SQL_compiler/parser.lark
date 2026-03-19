@@ -1,43 +1,17 @@
-// ============================================
-// ИМПОРТЫ БАЗОВЫХ ТЕРМИНАЛОВ
-// ============================================
 %import common.NUMBER
+%import common.ESCAPED_STRING
 %import common.LETTER
 %import common.DIGIT
 %import common.WS
 %import common.NEWLINE
 %import common.SH_COMMENT
 
-// НЕ импортируем ESCAPED_STRING, сделаем свой!
-
-// ============================================
-// НАСТРОЙКИ ЛЕКСЕРА
-// ============================================
 %ignore WS
 %ignore SH_COMMENT
 
 COMMENT: "/*" /(.|\n|\r)+/ "*/"
 %ignore COMMENT
 
-// ============================================
-// ТЕРМИНАЛЫ
-// ============================================
-IDENT: LETTER (LETTER | DIGIT | "_")*
-STAR: "*"
-COMMA: ","
-DOT: "."
-LPAREN: "("
-RPAREN: ")"
-SEMICOLON: ";"
-PLUS: "+"
-MINUS: "-"
-
-// Строки в одинарных или двойных кавычках
-STRING: /'[^']*'/ | /"[^"]*"/
-
-// ============================================
-// КЛЮЧЕВЫЕ СЛОВА SQL (регистронезависимые)
-// ============================================
 SELECT: "select"i
 FROM: "from"i
 WHERE: "where"i
@@ -70,86 +44,93 @@ OFFSET: "offset"i
 BETWEEN: "between"i
 EXISTS: "exists"i
 
-// ============================================
-// БАЗОВЫЕ ТИПЫ ДАННЫХ
-// ============================================
+IDENT: LETTER (LETTER | DIGIT | "_")*
+STAR: "*"
+COMMA: ","
+DOT: "."
+LPAREN: "("
+RPAREN: ")"
+SEMICOLON: ";"
+PLUS: "+"
+MINUS: "-"
+STRING: /'[^']*'/ | /"[^"]*"/
+
 num: NUMBER
-string: STRING  // используем наш STRING
+string: STRING
 bool: TRUE | FALSE
 null: NULL -> null_const
 distinct: DISTINCT
 
-// ============================================
-// ИДЕНТИФИКАТОРЫ
-// ============================================
 ident: IDENT -> simple_ident \
      | ident DOT IDENT -> compound_ident
 
-// ============================================
-// ВЫРАЖЕНИЯ
-// ============================================
-?primary_expr: num \
-             | string \
-             | bool \
-             | null \
-             | ident \
-             | LPAREN expr RPAREN \
-             | EXISTS LPAREN select_stmt RPAREN -> exists_subquery
+function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
 
-?unary_expr: primary_expr \
-           | PLUS unary_expr -> plus \
-           | MINUS unary_expr -> minus \
-           | NOT unary_expr -> not_expr \
-           | IS NULL -> is_null \
-           | IS NOT NULL -> is_not_null
+?atom: num
+     | string
+     | bool
+     | null
+     | ident
+     | function_call
+     | LPAREN expr RPAREN
+     | EXISTS LPAREN select_stmt RPAREN -> exists_subquery
 
-?mul_expr: unary_expr \
-         | mul_expr STAR unary_expr -> mul \
-         | mul_expr "/" unary_expr -> div \
+?unary_expr: atom
+           | PLUS unary_expr -> plus
+           | MINUS unary_expr -> minus
+           | NOT unary_expr -> not_expr
+
+?mul_expr: unary_expr
+         | mul_expr STAR unary_expr -> mul
+         | mul_expr "/" unary_expr -> div
          | mul_expr "%" unary_expr -> rem
 
-?add_expr: mul_expr \
-         | add_expr "+" mul_expr -> add \
+?add_expr: mul_expr
+         | add_expr "+" mul_expr -> add
          | add_expr "-" mul_expr -> sub
 
-?compare_expr: add_expr \
-             | add_expr ">" add_expr -> gt \
-             | add_expr ">=" add_expr -> ge \
-             | add_expr "<" add_expr -> lt \
-             | add_expr "<=" add_expr -> le \
-             | add_expr "=" add_expr -> eq \
-             | add_expr "!=" add_expr -> ne \
+?compare_expr: add_expr
+             | add_expr ">" add_expr -> gt
+             | add_expr ">=" add_expr -> ge
+             | add_expr "<" add_expr -> lt
+             | add_expr "<=" add_expr -> le
+             | add_expr "=" add_expr -> eq
+             | add_expr "!=" add_expr -> ne
              | add_expr "<>" add_expr -> ne
 
-?like_expr: compare_expr \
-          | compare_expr LIKE compare_expr -> like \
+?like_expr: compare_expr
+          | compare_expr LIKE compare_expr -> like
           | compare_expr NOT LIKE compare_expr -> not_like
 
-?in_expr: like_expr \
-        | like_expr IN LPAREN (expr (COMMA expr)*) RPAREN -> in_expr \
-        | like_expr NOT IN LPAREN (expr (COMMA expr)*) RPAREN -> not_in
+?is_expr: like_expr
+        | like_expr IS NULL -> is_null
+        | like_expr IS NOT NULL -> is_not_null
 
-?between_expr: in_expr \
-             | in_expr BETWEEN in_expr AND in_expr -> between \
+?in_expr: is_expr
+        | is_expr IN LPAREN expr_list RPAREN -> in_expr
+        | is_expr NOT IN LPAREN expr_list RPAREN -> not_in
+
+?between_expr: in_expr
+             | in_expr BETWEEN in_expr AND in_expr -> between
              | in_expr NOT BETWEEN in_expr AND in_expr -> not_between
 
-?and_expr: between_expr \
+?and_expr: between_expr
          | and_expr AND between_expr -> and_expr
 
-?or_expr: and_expr \
+?or_expr: and_expr
         | or_expr OR and_expr -> or_expr
 
-?expr: or_expr
+expr: or_expr
 
-// ============================================
-// SELECT ЗАПРОСЫ
-// ============================================
-select_stmt: select_core order_by? limit_offset? SEMICOLON? -> select_stmt
+expr_list: expr (COMMA expr)*
 
-select_core: SELECT distinct? select_list \
+select_stmt: SELECT distinct? select_list \
              (FROM table_refs)? \
              (WHERE expr)? \
-             (GROUP BY expr (COMMA expr)* (HAVING expr)?)? -> select_core
+             (GROUP BY expr_list (HAVING expr)?)? \
+             (ORDER BY ordering_term (COMMA ordering_term)*)? \
+             (LIMIT expr (OFFSET expr)?)? \
+             SEMICOLON? -> select_stmt
 
 select_list: select_item (COMMA select_item)* -> select_list
 
@@ -170,10 +151,6 @@ join_type: INNER -> inner_join \
          | RIGHT (OUTER)? -> right_join \
          | CROSS -> cross_join
 
-order_by: ORDER BY ordering_term (COMMA ordering_term)* -> order_by
-
 ordering_term: expr (ASC | DESC)? -> ordering_term
-
-limit_offset: LIMIT expr (OFFSET expr)? -> limit_offset
 
 start: select_stmt
