@@ -1,6 +1,6 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from table import Table
-from ast_nodes import *
+from SQL_compiler.parser.ast_nodes import *
 
 
 class RowContext:

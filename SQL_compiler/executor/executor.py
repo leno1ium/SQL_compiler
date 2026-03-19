@@ -1,7 +1,7 @@
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 from table import Table
 from execution_context import RowContext, ExpressionEvaluator
-from ast_nodes import *
+from SQL_compiler.parser.ast_nodes import *
 
 
 class QueryExecutor:

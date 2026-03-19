@@ -1,4 +1,4 @@
-from parser import print_ast
+from SQL_compiler.parser.parser import print_ast
 
 tests = [
     """SELECT DISTINCT 
