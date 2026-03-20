@@ -1,6 +1,6 @@
 from pathlib import Path
 from lark import Lark, Transformer
-from ast_nodes import *
+from SQL_compiler.parser.ast_nodes import *
 
 grammar_path = Path(__file__).parent / 'parser.lark'
 grammar = grammar_path.read_text(encoding='utf-8')

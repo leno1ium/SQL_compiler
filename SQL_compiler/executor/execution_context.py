@@ -1,5 +1,6 @@
 from typing import Dict, Any
-from table import Table
+
+from SQL_compiler.executor.table import Table
 from SQL_compiler.parser.ast_nodes import *
 
 
