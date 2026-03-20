@@ -39,22 +39,10 @@ class ExpressionEvaluator:
     """
 
     def __init__(self, context: Optional[RowContext] = None):
-        """
-        Args:
-            context: Контекст строки (может быть None для констант)
-        """
         self.context = context
 
     def evaluate(self, node: ExprNode) -> Any:
-        """
-        Вычислить значение выражения
 
-        Args:
-            node: Узел AST выражения
-
-        Returns:
-            Результат вычисления
-        """
         if node is None:
             return None
 

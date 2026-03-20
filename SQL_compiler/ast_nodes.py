@@ -330,14 +330,14 @@ class SelectCoreNode(StmtNode):
     def __init__(self,
                  distinct: bool,
                  select_list: List[SelectItemNode],
-                 from_node: Optional[FromNode] = None,  # ИСПРАВЛЕНО: from_tables -> from_node
+                 from_node: Optional[FromNode] = None,
                  where_clause: Optional[AstNode] = None,
                  group_by: Optional[List[ExprNode]] = None,
                  having_clause: Optional[ExprNode] = None):
         super().__init__()
         self.distinct = distinct
         self.select_list = select_list
-        self.from_node = from_node  # ИСПРАВЛЕНО: from_tables -> from_node
+        self.from_node = from_node
         self.where_clause = where_clause
         self.group_by = group_by or []
         self.having_clause = having_clause
