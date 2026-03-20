@@ -105,10 +105,8 @@ class SQLASTBuilder(Transformer):
         return BinOpNode(BinOp.NE, args[0], args[1])
 
     def and_expr(self, args):
-        """AND оператор - обрабатывает цепочки AND"""
         if len(args) == 1:
             return args[0]
-        # Ищем все части с AND
         result = args[0]
         i = 1
         while i < len(args):
@@ -120,10 +118,8 @@ class SQLASTBuilder(Transformer):
         return result
 
     def or_expr(self, args):
-        """OR оператор - обрабатывает цепочки OR"""
         if len(args) == 1:
             return args[0]
-        # Ищем все части с OR
         result = args[0]
         i = 1
         while i < len(args):
@@ -141,7 +137,6 @@ class SQLASTBuilder(Transformer):
         return BinOpNode(BinOp.NOT_LIKE, args[0], args[1])
 
     def in_expr(self, args):
-        """Обработка IN выражения"""
         # args: [is_expr, IN, LPAREN, expr_list, RPAREN] или [is_expr, NOT, IN, LPAREN, expr_list, RPAREN]
         if args[1] == 'NOT':
             expr = args[0]
@@ -153,20 +148,52 @@ class SQLASTBuilder(Transformer):
             return InNode(expr, elements, negated=False)
 
     def not_in(self, args):
-        """Обработка NOT IN выражения (альтернативный вариант)"""
         expr = args[0]
         elements = args[4] if isinstance(args[4], list) else [args[4]]
         return InNode(expr, elements, negated=True)
 
     def between(self, args):
-        """Обработка BETWEEN выражения"""
         # args: [in_expr, BETWEEN, in_expr, AND, in_expr]
         return BetweenNode(args[0], args[2], args[4], negated=False)
 
     def not_between(self, args):
-        """Обработка NOT BETWEEN выражения"""
-        # args: [in_expr, NOT, BETWEEN, in_expr, AND, in_expr]
-        return BetweenNode(args[0], args[3], args[5], negated=True)
+        # args: [in_expr, NOT_BETWEEN, in_expr, AND, in_expr]
+        return BetweenNode(args[0], args[2], args[4], negated=True)
+
+    def not_between_tail(self, args):
+        # args: [low, high]
+        return ('NOT_BETWEEN', args[0], args[1])
+
+    def not_like_tail(self, args):
+        # args: [right]
+        return ('NOT_LIKE', args[0])
+
+    def not_in_tail(self, args):
+        # args: [expr_list] (expr_list transformer returns List[ExprNode])
+        elements = args[0] if isinstance(args[0], list) else [args[0]]
+        return ('NOT_IN', elements)
+
+    def not_between_like(self, args):
+        # Grammar: in_expr NOT not_between_like_tail -> not_between_like
+        # Lark обычно передает токен NOT в args, поэтому ожидаем:
+        # [left, Token('NOT', 'NOT'), tail]
+        left = args[0]
+        tail = args[2] if len(args) >= 3 else args[1]
+        kind = tail[0]
+
+        if kind == 'NOT_BETWEEN':
+            _, low, high = tail
+            return BetweenNode(left, low, high, negated=True)
+
+        if kind == 'NOT_LIKE':
+            _, right = tail
+            return BinOpNode(BinOp.NOT_LIKE, left, right)
+
+        if kind == 'NOT_IN':
+            _, elements = tail
+            return InNode(left, elements, negated=True)
+
+        raise ValueError(f"Unknown NOT tail kind: {kind}")
 
     def expr_list(self, args):
         """Обработка списка выражений"""
@@ -175,7 +202,6 @@ class SQLASTBuilder(Transformer):
             if hasattr(arg, 'tree'):
                 result.append(arg)
             elif arg != ',':
-                # Может быть выражение без запятой
                 if hasattr(arg, 'tree'):
                     result.append(arg)
         return result
@@ -184,12 +210,10 @@ class SQLASTBuilder(Transformer):
         return SubQueryNode(args[2])  # EXISTS LPAREN select_stmt RPAREN
 
     def function_call(self, args):
-        """Вызов функции: COUNT(*), SUM(price), etc."""
         # args: [IDENT, LPAREN, ...args..., RPAREN]
         func_name = args[0]
         func_args = []
 
-        # Собираем аргументы между LPAREN и RPAREN
         for arg in args[2:-1]:  # пропускаем IDENT, LPAREN и последний RPAREN
             if not isinstance(arg, str) and not hasattr(arg, 'type'):
                 func_args.append(arg)
@@ -211,7 +235,6 @@ class SQLASTBuilder(Transformer):
         return SelectItemNode(StarNode(), None)
 
     def select_list(self, args):
-        """Список элементов SELECT"""
         result = []
         for arg in args:
             if self._is_node(arg):
@@ -276,7 +299,6 @@ class SQLASTBuilder(Transformer):
         return 'CROSS JOIN'
 
     def ordering_term(self, args):
-        """Термин сортировки: expr (ASC | DESC)?"""
         expr = args[0]
         direction = args[1] if len(args) > 1 and args[1] in ('ASC', 'DESC') else 'ASC'
         return OrderingTermNode(expr, direction)
@@ -296,7 +318,6 @@ class SQLASTBuilder(Transformer):
         return LimitOffsetNode(limit, offset)
 
     def select_stmt(self, args):
-        """Единый узел для всего SELECT запроса"""
         distinct = False
         select_list = None
         from_node = None
@@ -376,7 +397,6 @@ class SQLASTBuilder(Transformer):
             else:
                 i += 1
 
-        # Создаем узел SELECT
         return SelectStmtNode(
             distinct=distinct,
             select_list=select_list if isinstance(select_list, list) else [],

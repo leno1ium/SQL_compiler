@@ -3,7 +3,7 @@ from pathlib import Path
 from lark import Lark
 
 # Загружаем грамматику
-grammar_path = Path(__file__).parent / 'parser.lark'
+grammar_path = Path(__file__).parent / '../parser/parser.lark'
 grammar = grammar_path.read_text(encoding='utf-8')
 
 print("Проверка грамматики...")

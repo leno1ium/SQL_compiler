@@ -100,7 +100,6 @@ function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
 
 ?like_expr: compare_expr
           | compare_expr LIKE compare_expr -> like
-          | compare_expr NOT LIKE compare_expr -> not_like
 
 ?is_expr: like_expr
         | like_expr IS NULL -> is_null
@@ -108,11 +107,10 @@ function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
 
 ?in_expr: is_expr
         | is_expr IN LPAREN expr_list RPAREN -> in_expr
-        | is_expr NOT IN LPAREN expr_list RPAREN -> not_in
 
 ?between_expr: in_expr
              | in_expr BETWEEN in_expr AND in_expr -> between
-             | in_expr NOT BETWEEN in_expr AND in_expr -> not_between
+             | in_expr NOT not_between_like_tail -> not_between_like
 
 ?and_expr: between_expr
          | and_expr AND between_expr -> and_expr
@@ -123,6 +121,10 @@ function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
 expr: or_expr
 
 expr_list: expr (COMMA expr)*
+
+?not_between_like_tail: BETWEEN in_expr AND in_expr -> not_between_tail
+                       | LIKE compare_expr -> not_like_tail
+                       | IN LPAREN expr_list RPAREN -> not_in_tail
 
 select_stmt: SELECT distinct? select_list \
              (FROM table_refs)? \

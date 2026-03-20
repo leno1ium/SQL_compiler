@@ -22,11 +22,11 @@ WHERE u.age > 18
   AND u.email LIKE '%@gmail.com'
   AND u.email NOT LIKE '%test%'
   AND o.total BETWEEN 100 AND 5000
-  AND o.total BETWEEN 0 AND 99
+  AND o.total NOT BETWEEN 0 AND 99
   AND o.status IS NOT NULL
-  AND p.price IS NULL
+  AND p.price IS NOT NULL
   AND c.name IN ('Electronics', 'Clothing')
-  AND c.name IN ('Toys', 'Food')
+  AND c.name NOT IN ('Toys', 'Food')
   AND EXISTS (SELECT 1 FROM payments pay WHERE pay.order_id = o.id)
   AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.order_id = o.id)
 GROUP BY u.id, u.name, u.email, u.age
