@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Callable, Tuple, Optional, List
 from enum import Enum
 
+from lark import Token
+
 
 class AstNode(ABC):
     @property
@@ -20,7 +22,6 @@ class AstNode(ABC):
             ch0, ch = '├', '│'
             if i == len(childs) - 1:
                 ch0, ch = '└', ' '
-            # Исправлено: добавляем префикс к каждой строке дерева ребенка
             child_tree = child.tree
             for j, line in enumerate(child_tree):
                 prefix = ch0 if j == 0 else ch
@@ -29,7 +30,7 @@ class AstNode(ABC):
 
     def visit(self, func: Callable[['AstNode'], None]) -> None:
         func(self)
-        for child in self.childs:  # Исправлено: используем for вместо map
+        for child in self.childs:
             child.visit(func)
 
     def __getitem__(self, index):
@@ -114,8 +115,6 @@ class StarNode(ExprNode):
 
 
 class FromNode(AstNode):
-    """FROM узел - содержит список таблиц"""
-
     def __init__(self, tables: List[AstNode]):
         super().__init__()
         self.tables = tables
@@ -129,8 +128,6 @@ class FromNode(AstNode):
 
 
 class OnNode(AstNode):
-    """ON узел - содержит условие JOIN"""
-
     def __init__(self, condition: ExprNode):
         super().__init__()
         self.condition = condition
@@ -326,42 +323,6 @@ class JoinNode(AstNode):
         return self.join_type
 
 
-class SelectCoreNode(StmtNode):
-    def __init__(self,
-                 distinct: bool,
-                 select_list: List[SelectItemNode],
-                 from_node: Optional[FromNode] = None,
-                 where_clause: Optional[AstNode] = None,
-                 group_by: Optional[List[ExprNode]] = None,
-                 having_clause: Optional[ExprNode] = None):
-        super().__init__()
-        self.distinct = distinct
-        self.select_list = select_list
-        self.from_node = from_node
-        self.where_clause = where_clause
-        self.group_by = group_by or []
-        self.having_clause = having_clause
-
-    @property
-    def childs(self) -> Tuple[AstNode, ...]:
-        children = []
-        children.extend(self.select_list)
-        if self.from_node:
-            children.append(self.from_node)
-        if self.where_clause:
-            children.append(self.where_clause)
-        children.extend(self.group_by)
-        if self.having_clause:
-            children.append(self.having_clause)
-        return tuple(children)
-
-    def __str__(self) -> str:
-        base = 'SELECT'
-        if self.distinct:
-            base += ' DISTINCT'
-        return base
-
-
 class OrderingTermNode(AstNode):
     def __init__(self, expr: ExprNode, direction: str = 'ASC'):
         super().__init__()
@@ -397,17 +358,35 @@ class LimitOffsetNode(AstNode):
 
 class SelectStmtNode(StmtNode):
     def __init__(self,
-                 core: SelectCoreNode,
+                 distinct: bool,
+                 select_list: List[SelectItemNode],
+                 from_node: Optional[FromNode] = None,
+                 where_clause: Optional[AstNode] = None,
+                 group_by: Optional[List[ExprNode]] = None,
+                 having_clause: Optional[ExprNode] = None,
                  order_by: Optional[List[OrderingTermNode]] = None,
                  limit_offset: Optional[LimitOffsetNode] = None):
         super().__init__()
-        self.core = core
+        self.distinct = distinct
+        self.select_list = select_list
+        self.from_node = from_node
+        self.where_clause = where_clause
+        self.group_by = group_by or []
+        self.having_clause = having_clause
         self.order_by = order_by or []
         self.limit_offset = limit_offset
 
     @property
     def childs(self) -> Tuple[AstNode, ...]:
-        children = [self.core]
+        children = []
+        children.extend(self.select_list)
+        if self.from_node:
+            children.append(self.from_node)
+        if self.where_clause:
+            children.append(self.where_clause)
+        children.extend(self.group_by)
+        if self.having_clause:
+            children.append(self.having_clause)
         if self.order_by:
             children.extend(self.order_by)
         if self.limit_offset:
@@ -415,12 +394,13 @@ class SelectStmtNode(StmtNode):
         return tuple(children)
 
     def __str__(self) -> str:
-        return 'SELECT STATEMENT'
+        base = 'SELECT'
+        if self.distinct:
+            base += ' DISTINCT'
+        return base
 
 
 class StmtListNode(StmtNode):
-    """Список операторов (для блоков)"""
-
     def __init__(self, *stmts: StmtNode):
         super().__init__()
         self.stmts = stmts
@@ -431,3 +411,25 @@ class StmtListNode(StmtNode):
 
     def __str__(self) -> str:
         return '...'
+
+
+class FuncCallNode(ExprNode):
+    """Вызов функции (COUNT, SUM, AVG, MIN, MAX)"""
+
+    def __init__(self, name: str, args: List[ExprNode]):
+        super().__init__()
+        self.name = name
+        self.args = args
+
+    @property
+    def childs(self) -> Tuple[ExprNode, ...]:
+        return tuple(self.args)
+
+    def __str__(self) -> str:
+        if len(self.args) == 1 and isinstance(self.args[0], StarNode):
+            return f"{self.name}(*)"
+        elif len(self.args) == 1:
+            return f"{self.name}({self.args[0]})"
+        else:
+            args_str = ", ".join(str(arg) for arg in self.args)
+            return f"{self.name}({args_str})"

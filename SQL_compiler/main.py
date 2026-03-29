@@ -1,9 +1,8 @@
 from pathlib import Path
 from openpyxl.utils import datetime
-from table import ExcelLoader
-from executor import QueryExecutor
-from parser import print_ast, parse
-import os
+from SQL_compiler.executor.table import ExcelLoader
+from SQL_compiler.executor.executor import QueryExecutor
+from SQL_compiler.parser.parser import parse
 
 
 def load_excel_file() -> Path:
@@ -43,7 +42,6 @@ def load_excel_file() -> Path:
 
 def create_sample_excel() -> Path:
     import openpyxl
-    from datetime import datetime
 
     print("\nСоздание тестового Excel файла...")
 
@@ -297,7 +295,7 @@ def load_tests_from_file() -> list:
     tests = []
 
     try:
-        import test as test_module
+        from SQL_compiler.test import test as test_module
 
         if hasattr(test_module, 'tests'):
             tests_from_file = test_module.tests

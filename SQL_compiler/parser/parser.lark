@@ -1,0 +1,158 @@
+%import common.NUMBER
+%import common.ESCAPED_STRING
+%import common.LETTER
+%import common.DIGIT
+%import common.WS
+%import common.NEWLINE
+%import common.SH_COMMENT
+
+%ignore WS
+%ignore SH_COMMENT
+
+COMMENT: "/*" /(.|\n|\r)+/ "*/"
+%ignore COMMENT
+
+SELECT: "select"i
+FROM: "from"i
+WHERE: "where"i
+AND: "and"i
+OR: "or"i
+NOT: "not"i
+LIKE: "like"i
+IN: "in"i
+IS: "is"i
+NULL: "null"i
+TRUE: "true"i
+FALSE: "false"i
+DISTINCT: "distinct"i
+AS: "as"i
+ON: "on"i
+JOIN: "join"i
+INNER: "inner"i
+LEFT: "left"i
+RIGHT: "right"i
+OUTER: "outer"i
+CROSS: "cross"i
+GROUP: "group"i
+BY: "by"i
+HAVING: "having"i
+ORDER: "order"i
+ASC: "asc"i
+DESC: "desc"i
+LIMIT: "limit"i
+OFFSET: "offset"i
+BETWEEN: "between"i
+EXISTS: "exists"i
+
+IDENT: LETTER (LETTER | DIGIT | "_")*
+STAR: "*"
+COMMA: ","
+DOT: "."
+LPAREN: "("
+RPAREN: ")"
+SEMICOLON: ";"
+PLUS: "+"
+MINUS: "-"
+STRING: /'[^']*'/ | /"[^"]*"/
+
+num: NUMBER
+string: STRING
+bool: TRUE | FALSE
+null: NULL -> null_const
+distinct: DISTINCT
+
+ident: IDENT -> simple_ident \
+     | ident DOT IDENT -> compound_ident
+
+function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
+
+?atom: num
+     | string
+     | bool
+     | null
+     | ident
+     | function_call
+     | LPAREN expr RPAREN
+     | EXISTS LPAREN select_stmt RPAREN -> exists_subquery
+
+?unary_expr: atom
+           | PLUS unary_expr -> plus
+           | MINUS unary_expr -> minus
+           | NOT unary_expr -> not_expr
+
+?mul_expr: unary_expr
+         | mul_expr STAR unary_expr -> mul
+         | mul_expr "/" unary_expr -> div
+         | mul_expr "%" unary_expr -> rem
+
+?add_expr: mul_expr
+         | add_expr "+" mul_expr -> add
+         | add_expr "-" mul_expr -> sub
+
+?compare_expr: add_expr
+             | add_expr ">" add_expr -> gt
+             | add_expr ">=" add_expr -> ge
+             | add_expr "<" add_expr -> lt
+             | add_expr "<=" add_expr -> le
+             | add_expr "=" add_expr -> eq
+             | add_expr "!=" add_expr -> ne
+             | add_expr "<>" add_expr -> ne
+
+?like_expr: compare_expr
+          | compare_expr LIKE compare_expr -> like
+
+?is_expr: like_expr
+        | like_expr IS NULL -> is_null
+        | like_expr IS NOT NULL -> is_not_null
+
+?in_expr: is_expr
+        | is_expr IN LPAREN expr_list RPAREN -> in_expr
+
+?between_expr: in_expr
+             | in_expr BETWEEN in_expr AND in_expr -> between
+             | in_expr NOT not_between_like_tail -> not_between_like
+
+?and_expr: between_expr
+         | and_expr AND between_expr -> and_expr
+
+?or_expr: and_expr
+        | or_expr OR and_expr -> or_expr
+
+expr: or_expr
+
+expr_list: expr (COMMA expr)*
+
+?not_between_like_tail: BETWEEN in_expr AND in_expr -> not_between_tail
+                       | LIKE compare_expr -> not_like_tail
+                       | IN LPAREN expr_list RPAREN -> not_in_tail
+
+select_stmt: SELECT distinct? select_list \
+             (FROM table_refs)? \
+             (WHERE expr)? \
+             (GROUP BY expr_list (HAVING expr)?)? \
+             (ORDER BY ordering_term (COMMA ordering_term)*)? \
+             (LIMIT expr (OFFSET expr)?)? \
+             SEMICOLON? -> select_stmt
+
+select_list: select_item (COMMA select_item)* -> select_list
+
+select_item: expr (AS? ident)? -> select_item \
+           | STAR -> select_all
+
+table_refs: table_ref (COMMA table_ref)* -> table_refs
+
+table_ref: table_primary (join_clause)* -> table_ref
+
+table_primary: ident (AS? ident)? -> table_base \
+             | LPAREN select_stmt RPAREN (AS? ident)? -> table_subquery
+
+join_clause: join_type? JOIN table_primary (ON expr)? -> join_clause
+
+join_type: INNER -> inner_join \
+         | LEFT (OUTER)? -> left_join \
+         | RIGHT (OUTER)? -> right_join \
+         | CROSS -> cross_join
+
+ordering_term: expr (ASC | DESC)? -> ordering_term
+
+start: select_stmt
