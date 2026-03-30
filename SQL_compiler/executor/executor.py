@@ -1,128 +1,230 @@
-from typing import Dict, Any
-from SQL_compiler.executor.execution_context import RowContext, ExpressionEvaluator
+from typing import List, Dict, Any, Optional, Tuple
 from SQL_compiler.executor.table import Table
+from SQL_compiler.executor.execution_context import RowContext, ExpressionEvaluator, GroupContext
 from SQL_compiler.parser.ast_nodes import *
 
 
 class QueryExecutor:
-    """
-    Исполнитель SQL SELECT запросов.
-    Принимает AST и выполняет его над загруженными таблицами.
-    """
-
     def __init__(self, tables: Dict[str, Table]):
         self.tables = tables
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
-        """
-        Выполнить SELECT запрос
-
-        Args:
-            stmt: AST узлел SELECT запроса
-
-        Returns:
-            Список строк результата (каждая строка - словарь {колонка: значение})
-        """
         if not isinstance(stmt, SelectStmtNode):
             raise TypeError(f"Expected SelectStmtNode, got {type(stmt)}")
 
-        # Получаем таблицу из FROM секции
-        table = self._get_table(stmt.core.from_node)
-        if table is None:
-            raise Exception(f"Table not found in query")
+        if stmt.from_node is None or not stmt.from_node.tables:
+            return self._execute_without_from(stmt)
 
-        print(f"\nВыполнение запроса над таблицей: {table.name}")
+        result_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
 
-        # Применяем WHERE и собираем строки
-        result_rows = []
+        if stmt.group_by:
+            result_rows = self._execute_group_by(result_rows, stmt.group_by, stmt.select_list, stmt.having_clause)
+        else:
+            result_rows = self._execute_select(result_rows, stmt.select_list)
 
-        for row_idx, row in enumerate(table.rows):
-            context = RowContext(table, row)
-            context.row_index = row_idx
-
-            if not self._check_where(stmt.core.where_clause, context):
-                continue
-
-            selected_row = self._project_row(stmt.core.select_list, context)
-            result_rows.append(selected_row)
-
-        print(f"Найдено строк: {len(result_rows)} из {len(table)}")
-
-        if stmt.core.distinct:
+        if stmt.distinct:
             result_rows = self._apply_distinct(result_rows)
             print(f"После DISTINCT: {len(result_rows)} уникальных строк")
 
         if stmt.order_by:
-            result_rows = self._apply_order_by(result_rows, stmt.order_by, table)
-            print(f"Применена сортировка")
+            result_rows = self._apply_order_by(result_rows, stmt.order_by)
 
         if stmt.limit_offset:
             result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
-            print(f"Применены LIMIT/OFFSET")
 
         return result_rows
 
-    def _get_table(self, from_node: Optional[FromNode]) -> Optional[Table]:
-        """
-        Получить таблицу из FROM узла
+    def _execute_without_from(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
+        result = []
+        evaluator = ExpressionEvaluator(None)
+        for item in stmt.select_list:
+            try:
+                value = evaluator.evaluate(item.expr)
+                name = item.alias or str(item.expr)
+                result.append({name: value})
+            except Exception as e:
+                print(f"Ошибка: {e}")
+        return result
 
-        Args:
-            from_node: FROM узел AST
+    def _execute_from_and_joins(self, from_node: FromNode, where_clause: Optional[ExprNode]) -> List[Dict[str, Any]]:
+        if not from_node.tables:
+            return []
 
-        Returns:
-            Таблица или None
-        """
-        if from_node is None or not from_node.tables:
-            return None
+        current_rows = None
 
-        # TODO: поддержка JOIN и подзапросов
-        first_table = from_node.tables[0]
+        for table_node in from_node.tables:
+            if isinstance(table_node, TableBaseNode):
+                table = self.tables.get(table_node.name)
+                if table is None:
+                    continue
 
-        if isinstance(first_table, TableBaseNode):
-            table_name = first_table.name
-            if table_name in self.tables:
-                return self.tables[table_name]
+                if current_rows is None:
+                    current_rows = [row.copy() for row in table.rows]
+                else:
+                    new_rows = []
+                    for existing_row in current_rows:
+                        for new_row in table.rows:
+                            merged = existing_row.copy()
+                            for key, value in new_row.items():
+                                merged[key] = value
+                            new_rows.append(merged)
+                    current_rows = new_rows
 
+            elif isinstance(table_node, JoinNode):
+                right_table = self._get_table_from_node(table_node.table)
+                if right_table is None:
+                    continue
+
+                condition = None
+                if table_node.condition:
+                    if isinstance(table_node.condition, OnNode):
+                        condition = table_node.condition.condition
+                    else:
+                        condition = table_node.condition
+
+                join_type = table_node.join_type
+
+                new_rows = []
+                for existing_row in current_rows:
+                    matched = False
+                    for right_row in right_table.rows:
+                        merged = existing_row.copy()
+                        for key, value in right_row.items():
+                            merged[key] = value
+
+                        if condition:
+                            temp_table = self._create_temp_table(merged)
+                            context = RowContext(temp_table, merged)
+                            evaluator = ExpressionEvaluator(context)
+                            try:
+                                if not bool(evaluator.evaluate(condition)):
+                                    continue
+                            except Exception:
+                                continue
+
+                        matched = True
+                        new_rows.append(merged)
+
+                    if join_type in ('LEFT JOIN', 'LEFT OUTER JOIN') and not matched:
+                        merged = existing_row.copy()
+                        for col in right_table.column_names:
+                            merged[col] = None
+                        new_rows.append(merged)
+
+                current_rows = new_rows
+
+        if where_clause and current_rows:
+            filtered_rows = []
+            for row in current_rows:
+                temp_table = self._create_temp_table(row)
+                context = RowContext(temp_table, row)
+                evaluator = ExpressionEvaluator(context)
+                try:
+                    if bool(evaluator.evaluate(where_clause)):
+                        filtered_rows.append(row)
+                except Exception:
+                    continue
+            current_rows = filtered_rows
+
+        return current_rows if current_rows else []
+
+    def _get_table_from_node(self, node: AstNode) -> Optional[Table]:
+        if isinstance(node, TableBaseNode):
+            return self.tables.get(node.name)
+        elif isinstance(node, TableSubqueryNode):
+            sub_executor = QueryExecutor(self.tables)
+            sub_result = sub_executor.execute(node.query)
+            if sub_result:
+                return self._dict_to_table(f"_subquery", sub_result)
         return None
 
-    def _check_where(self, where_clause: Optional[ExprNode], context: RowContext) -> bool:
-        """
-        Проверить условие WHERE для строки
+    def _create_temp_table(self, row: Dict[str, Any]) -> Table:
+        table = Table("temp")
+        for col, value in row.items():
+            col_type = type(value) if value is not None else str
+            table.add_column(col, col_type)
+        table.add_row(row)
+        return table
 
-        Args:
-            where_clause: Узел условия WHERE
-            context: Контекст строки
+    def _dict_to_table(self, name: str, rows: List[Dict[str, Any]]) -> Table:
+        table = Table(name)
+        if not rows:
+            return table
+        for col in rows[0].keys():
+            col_type = type(rows[0][col]) if rows[0][col] is not None else str
+            table.add_column(col, col_type)
+        for row in rows:
+            table.add_row(row)
+        return table
 
-        Returns:
-            True если строка проходит условие
-        """
-        if where_clause is None:
-            return True
+    def _execute_select(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> List[Dict[str, Any]]:
+        result_rows = []
+        for row in rows:
+            temp_table = self._create_temp_table(row)
+            context = RowContext(temp_table, row)
+            selected_row = self._project_row(select_list, context)
+            result_rows.append(selected_row)
+        print(f"Найдено строк: {len(result_rows)}")
+        return result_rows
 
-        evaluator = ExpressionEvaluator(context)
-        try:
-            result = evaluator.evaluate(where_clause)
-            return bool(result)
-        except Exception as e:
-            print(f"  Ошибка при вычислении WHERE: {e}")
-            return False
+    def _execute_group_by(self, rows: List[Dict[str, Any]], group_by: List[ExprNode],
+                          select_list: List[SelectItemNode], having_clause: Optional[ExprNode]) -> List[Dict[str, Any]]:
+        groups = {}
+
+        for row in rows:
+            temp_table = self._create_temp_table(row)
+            context = RowContext(temp_table, row)
+            evaluator = ExpressionEvaluator(context)
+
+            key_parts = []
+            for expr in group_by:
+                try:
+                    value = evaluator.evaluate(expr)
+                    key_parts.append(value)
+                except Exception:
+                    key_parts.append(None)
+            key = tuple(key_parts)
+
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(row)
+
+        result_rows = []
+
+        for group_key, group_rows in groups.items():
+            if having_clause:
+                group_context = GroupContext(None, group_rows)
+                evaluator = ExpressionEvaluator(None, group_context)
+                if not bool(evaluator.evaluate(having_clause)):
+                    continue
+
+            group_context = GroupContext(None, group_rows)
+            evaluator = ExpressionEvaluator(None, group_context)
+
+            row_dict = {}
+            for item in select_list:
+                if isinstance(item.expr, StarNode):
+                    if group_rows:
+                        for col, val in group_rows[0].items():
+                            row_dict[col] = val
+                else:
+                    try:
+                        value = evaluator.evaluate(item.expr)
+                        name = item.alias or str(item.expr)
+                        row_dict[name] = value
+                    except Exception as e:
+                        print(f"Ошибка: {e}")
+                        row_dict[str(item.expr)] = None
+            result_rows.append(row_dict)
+
+        print(f"Групп: {len(groups)}, результирующих строк: {len(result_rows)}")
+        return result_rows
 
     def _project_row(self, select_list: List[SelectItemNode], context: RowContext) -> Dict[str, Any]:
-        """
-        Выбрать нужные колонки из строки (SELECT)
-
-        Args:
-            select_list: Список элементов SELECT
-            context: Контекст строки
-
-        Returns:
-            Словарь с выбранными колонками
-        """
         result = {}
         evaluator = ExpressionEvaluator(context)
 
         for item in select_list:
-
             if isinstance(item.expr, StarNode):
                 for col in context.table.column_names:
                     result[col] = context.get_value(col)
@@ -130,65 +232,29 @@ class QueryExecutor:
 
             try:
                 value = evaluator.evaluate(item.expr)
-
-                if item.alias:
-                    name = item.alias
-                elif isinstance(item.expr, IdentNode):
-                    name = item.expr.name
-                elif isinstance(item.expr, CompoundIdentNode):
-                    name = item.expr.full_name
-                else:
-                    name = str(item.expr)
-
+                name = item.alias if item.alias else str(item.expr)
                 result[name] = value
-
             except Exception as e:
-                print(f"  Ошибка при вычислении выражения: {e}")
+                print(f"Ошибка при вычислении выражения: {e}")
                 name = item.alias or str(item.expr)
                 result[name] = None
-
         return result
 
     def _apply_distinct(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Убрать дубликаты строк (DISTINCT)
-
-        Args:
-            rows: Исходные строки
-
-        Returns:
-            Уникальные строки
-        """
         unique_rows = []
         seen = set()
-
         for row in rows:
-            row_tuple = tuple(sorted(row.items()))
+            row_tuple = tuple(sorted((k, v) for k, v in row.items()))
             if row_tuple not in seen:
                 seen.add(row_tuple)
                 unique_rows.append(row)
-
         return unique_rows
 
-    def _apply_order_by(self, rows: List[Dict[str, Any]],
-                        order_by: List[OrderingTermNode],
-                        table: Table) -> List[Dict[str, Any]]:
-        """
-        Применить сортировку (ORDER BY)
-
-        Args:
-            rows: Исходные строки
-            order_by: Список условий сортировки
-            table: Таблица (для контекста)
-
-        Returns:
-            Отсортированные строки
-        """
-
+    def _apply_order_by(self, rows: List[Dict[str, Any]], order_by: List[OrderingTermNode]) -> List[Dict[str, Any]]:
         def sort_key(row):
-            context = RowContext(table, row)
+            temp_table = self._create_temp_table(row)
+            context = RowContext(temp_table, row)
             evaluator = ExpressionEvaluator(context)
-
             key = []
             for term in order_by:
                 try:
@@ -199,28 +265,15 @@ class QueryExecutor:
             return tuple(key)
 
         reverse = any(term.direction == 'DESC' for term in order_by)
-
         try:
             return sorted(rows, key=sort_key, reverse=reverse)
         except Exception as e:
-            print(f"  Ошибка при сортировке: {e}")
+            print(f"Ошибка при сортировке: {e}")
             return rows
 
     def _apply_limit_offset(self, rows: List[Dict[str, Any]],
                             limit_offset: LimitOffsetNode) -> List[Dict[str, Any]]:
-        """
-        Применить LIMIT и OFFSET
-
-        Args:
-            rows: Исходные строки
-            limit_offset: Узел LIMIT/OFFSET
-
-        Returns:
-            Ограниченный набор строк
-        """
-
         evaluator = ExpressionEvaluator(None)
-
         try:
             limit_val = evaluator.evaluate(limit_offset.limit)
             limit = int(limit_val) if limit_val is not None else len(rows)
@@ -237,5 +290,4 @@ class QueryExecutor:
 
         start = min(offset, len(rows))
         end = min(start + limit, len(rows))
-
         return rows[start:end]

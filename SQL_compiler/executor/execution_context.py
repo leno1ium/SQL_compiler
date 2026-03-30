@@ -1,25 +1,13 @@
-from typing import Dict, Any
-
+from typing import Dict, Any, Optional, List
 from SQL_compiler.executor.table import Table
 from SQL_compiler.parser.ast_nodes import *
 
 
 class RowContext:
-    """
-
-    Контекст для вычисления выражений на конкретной строке таблицы.
-    Предоставляет доступ к значениям колонок и их типам.
-    """
-
     def __init__(self, table: Table, row: Dict[str, Any]):
-        """
-        Args:
-            table: Таблица, к которой относится строка
-            row: Словарь с данными строки {колонка: значение}
-        """
         self.table = table
         self.row = row
-        self.row_index = -1  # Будет установлено при итерации
+        self.row_index = -1
 
     def get_value(self, column_name: str) -> Any:
         if column_name not in self.row:
@@ -33,33 +21,52 @@ class RowContext:
         return column_name in self.row
 
 
-class ExpressionEvaluator:
-    """
-    Вычислитель выражений AST.
-    Обходит дерево выражений и вычисляет значения в контексте строки.
-    """
+class GroupContext:
+    def __init__(self, table: Optional[Table], rows: List[Dict[str, Any]]):
+        self.table = table
+        self.rows = rows
 
-    def __init__(self, context: Optional[RowContext] = None):
+    def get_aggregate(self, func_name: str, column: Optional[str] = None) -> Any:
+        values = []
+        for row in self.rows:
+            if column:
+                val = row.get(column)
+            else:
+                val = 1
+            if val is not None:
+                values.append(val)
+
+        if func_name == 'COUNT':
+            return len(values)
+        elif func_name == 'SUM':
+            return sum(values) if values else 0
+        elif func_name == 'AVG':
+            return sum(values) / len(values) if values else 0
+        elif func_name == 'MIN':
+            return min(values) if values else None
+        elif func_name == 'MAX':
+            return max(values) if values else None
+        return None
+
+
+class ExpressionEvaluator:
+    def __init__(self, context: Optional[RowContext] = None, group_context: Optional[GroupContext] = None):
         self.context = context
+        self.group_context = group_context
 
     def evaluate(self, node: ExprNode) -> Any:
-
         if node is None:
             return None
 
         if isinstance(node, NumNode):
             return node.num
-
         elif isinstance(node, StringNode):
             return node.value
-
         elif isinstance(node, BoolNode):
             return node.value
-
         elif isinstance(node, NullNode):
             return None
 
-        # Идентификаторы (колонки таблицы)
         elif isinstance(node, IdentNode):
             if self.context is None:
                 raise RuntimeError("Cannot evaluate column without context")
@@ -70,53 +77,58 @@ class ExpressionEvaluator:
                 raise RuntimeError("Cannot evaluate column without context")
             return self.context.get_value(node.parts[-1])
 
-        # Унарные операторы
         elif isinstance(node, UnOpNode):
             arg = self.evaluate(node.arg)
             return self._evaluate_unary(node.op, arg)
 
-        # Бинарные операторы
         elif isinstance(node, BinOpNode):
             left = self.evaluate(node.arg1)
             right = self.evaluate(node.arg2)
             return self._evaluate_binary(node.op, left, right)
 
-        # BETWEEN
         elif isinstance(node, BetweenNode):
             value = self.evaluate(node.expr)
             low = self.evaluate(node.low)
             high = self.evaluate(node.high)
-
             if value is None or low is None or high is None:
                 result = False
             else:
                 result = low <= value <= high
-
             return not result if node.negated else result
 
-        # IN
         elif isinstance(node, InNode):
             value = self.evaluate(node.expr)
             elements = [self.evaluate(el) for el in node.elements]
-
             if value is None:
                 result = False
             else:
                 result = value in elements
-
             return not result if node.negated else result
 
-        # IS NULL / IS NOT NULL
         elif isinstance(node, IsNullNode):
             value = self.evaluate(node.expr)
             result = (value is None)
             return not result if node.negated else result
 
         elif isinstance(node, SubQueryNode):
-            # TODO: реализовать поддержку подзапросов
-            raise NotImplementedError("Subqueries not yet supported")
+            from SQL_compiler.executor.executor import QueryExecutor
 
-        # Звездочка (*) - все колонки
+            executor = QueryExecutor({})
+            if self.context and self.context.table:
+                executor.tables = {self.context.table.name: self.context.table}
+
+            result = executor.execute(node.query)
+            return len(result) > 0
+
+        elif isinstance(node, FuncCallNode):
+            if self.group_context is not None:
+                column_name = node.args[0].name if node.args and hasattr(node.args[0], 'name') else None
+                return self.group_context.get_aggregate(node.name.upper(), column_name)
+            elif self.context is not None:
+                if node.name.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX'):
+                    return 1 if node.name.upper() == 'COUNT' else None
+            return None
+
         elif isinstance(node, StarNode):
             if self.context is None:
                 return {}
@@ -137,12 +149,9 @@ class ExpressionEvaluator:
             raise ValueError(f"Unknown unary operator: {op}")
 
     def _evaluate_binary(self, op: BinOp, left: Any, right: Any) -> Any:
-
-        # Арифметические операции
         if op in (BinOp.ADD, BinOp.SUB, BinOp.MUL, BinOp.DIV, BinOp.REM):
             left_num = self._to_number(left)
             right_num = self._to_number(right)
-
             if op == BinOp.ADD:
                 return left_num + right_num
             elif op == BinOp.SUB:
@@ -151,18 +160,16 @@ class ExpressionEvaluator:
                 return left_num * right_num
             elif op == BinOp.DIV:
                 if right_num == 0:
-                    return None  # Деление на ноль
+                    return None
                 return left_num / right_num
             elif op == BinOp.REM:
                 if right_num == 0:
                     return None
                 return left_num % right_num
 
-        # Операции сравнения
         elif op in (BinOp.EQ, BinOp.NE, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
             if left is None or right is None:
                 return False
-
             if op == BinOp.EQ:
                 return left == right
             elif op == BinOp.NE:
@@ -176,25 +183,20 @@ class ExpressionEvaluator:
             elif op == BinOp.LE:
                 return left <= right
 
-        # Логические операции
         elif op in (BinOp.AND, BinOp.OR):
             left_bool = self._to_bool(left)
-
             if op == BinOp.AND:
                 return left_bool and self._to_bool(right)
             elif op == BinOp.OR:
                 return left_bool or self._to_bool(right)
 
-        # LIKE операция
         elif op in (BinOp.LIKE, BinOp.NOT_LIKE):
             if left is None or right is None:
                 return False
-
             import re
             pattern = str(right)
             pattern = pattern.replace('%', '.*').replace('_', '.')
             pattern = f"^{pattern}$"
-
             try:
                 match = bool(re.match(pattern, str(left), re.IGNORECASE))
                 return not match if op == BinOp.NOT_LIKE else match
