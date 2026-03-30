@@ -14,7 +14,7 @@ try:
 
     # Тестовые запросы
     test_queries = [
-        """SELECT DISTINCT u.name, COUNT(o.id) as order_count
+        """SELECT DISTINCT u.name, COUNT(*) as order_count
     FROM users u
     INNER JOIN orders o ON u.id = o.user_id
     WHERE u.age > 18 

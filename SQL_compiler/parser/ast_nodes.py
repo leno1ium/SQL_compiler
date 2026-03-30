@@ -3,6 +3,7 @@ from typing import Callable, Tuple, Optional, List
 from enum import Enum
 
 from lark import Token
+import json, time
 
 
 class AstNode(ABC):
@@ -19,6 +20,32 @@ class AstNode(ABC):
         res = [str(self)]
         childs = self.childs
         for i, child in enumerate(childs):
+            if not isinstance(child, AstNode):
+                # #region agent log
+                try:
+                    payload = {
+                        "sessionId": "f6bfae",
+                        "runId": "pre-fix",
+                        "hypothesisId": "H4",
+                        "location": "ast_nodes.py:AstNode.tree",
+                        "message": "Non-AstNode child encountered",
+                        "data": {
+                            "parent_type": type(self).__name__,
+                            "parent_str": str(self)[:120],
+                            "child_index": i,
+                            "child_type": type(child).__name__,
+                            "child_repr": repr(child)[:200],
+                            "child_str": str(child)[:200],
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    }
+                    with open(r"c:\Users\User\Desktop\SQL_compiler\debug-f6bfae.log", "a", encoding="utf-8") as f:
+                        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                # Preserve original failure signal, but clearer
+                raise AttributeError(f"Non-AstNode child in tree(): {type(child).__name__}")
             ch0, ch = '├', '│'
             if i == len(childs) - 1:
                 ch0, ch = '└', ' '
@@ -199,6 +226,9 @@ class BinOpNode(ExprNode):
         return self.arg1, self.arg2
 
     def __str__(self) -> str:
+        # Для логических операторов используем их названия
+        if self.op in (BinOp.AND, BinOp.OR):
+            return str(self.op.value)
         return str(self.op.value)
 
 
@@ -260,7 +290,32 @@ class SubQueryNode(ExprNode):
     def __str__(self) -> str:
         return 'EXISTS'
 
+class ExistsNode(ExprNode):
+    def __init__(self, subquery: 'SelectStmtNode', negated: bool = False):
+        super().__init__()
+        self.subquery = subquery
+        self.negated = negated
 
+    @property
+    def childs(self) -> Tuple['SelectStmtNode']:
+        return self.subquery,
+
+    def __str__(self) -> str:
+        return 'NOT EXISTS' if self.negated else 'EXISTS'
+
+class InSubqueryNode(ExprNode):
+    def __init__(self, expr: ExprNode, subquery: 'SelectStmtNode', negated: bool = False):
+        super().__init__()
+        self.expr = expr
+        self.subquery = subquery
+        self.negated = negated
+
+    @property
+    def childs(self) -> Tuple[ExprNode, 'SelectStmtNode']:
+        return self.expr, self.subquery
+
+    def __str__(self) -> str:
+        return 'NOT IN' if self.negated else 'IN'
 # select
 class SelectItemNode(AstNode):
     def __init__(self, expr: ExprNode, alias: Optional[str] = None):
@@ -309,19 +364,19 @@ class TableSubqueryNode(AstNode):
 class JoinNode(AstNode):
     def __init__(self, join_type: str, table: AstNode, condition: Optional[ExprNode] = None):
         super().__init__()
-        self.join_type = join_type
+        self.join_type = join_type.strip()  # Убираем лишние пробелы
         self.table = table
         self.condition = condition
 
     @property
     def childs(self) -> Tuple[AstNode, ...]:
+        children = [self.table]
         if self.condition:
-            return self.table, self.condition
-        return self.table,
+            children.append(OnNode(self.condition))
+        return tuple(children)
 
     def __str__(self) -> str:
         return self.join_type
-
 
 class OrderingTermNode(AstNode):
     def __init__(self, expr: ExprNode, direction: str = 'ASC'):
@@ -379,18 +434,40 @@ class SelectStmtNode(StmtNode):
     @property
     def childs(self) -> Tuple[AstNode, ...]:
         children = []
-        children.extend(self.select_list)
+
+        # Добавляем SELECT список с заголовком
+        if self.select_list:
+            # Создаем специальный узел для SELECT списка
+            children.append(SelectListNode(self.select_list))
+
+        # Добавляем FROM
         if self.from_node:
             children.append(self.from_node)
-        if self.where_clause:
-            children.append(self.where_clause)
-        children.extend(self.group_by)
+
+        # Добавляем WHERE
+        if self.where_clause is not None:
+            # Проверяем, не обернут ли уже в WhereNode
+            if not isinstance(self.where_clause, WhereNode):
+                children.append(WhereNode(self.where_clause))
+            else:
+                children.append(self.where_clause)
+
+        # Добавляем GROUP BY
+        if self.group_by:
+            children.append(GroupByNode(self.group_by))
+
+        # Добавляем HAVING
         if self.having_clause:
-            children.append(self.having_clause)
+            children.append(HavingNode(self.having_clause))
+
+        # Добавляем ORDER BY
         if self.order_by:
-            children.extend(self.order_by)
+            children.append(OrderByNode(self.order_by))
+
+        # Добавляем LIMIT/OFFSET
         if self.limit_offset:
             children.append(self.limit_offset)
+
         return tuple(children)
 
     def __str__(self) -> str:
@@ -399,6 +476,80 @@ class SelectStmtNode(StmtNode):
             base += ' DISTINCT'
         return base
 
+
+class SelectListNode(AstNode):
+    """Вспомогательный узел для отображения SELECT списка"""
+
+    def __init__(self, select_list: List[SelectItemNode]):
+        super().__init__()
+        self.select_list = select_list
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return tuple(self.select_list)
+
+    def __str__(self) -> str:
+        return "SELECT"
+
+
+class WhereNode(AstNode):
+    """Узел для WHERE clause"""
+
+    def __init__(self, condition: AstNode):
+        super().__init__()
+        self.condition = condition
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return self.condition,
+
+    def __str__(self) -> str:
+        return "WHERE"
+
+
+class GroupByNode(AstNode):
+    """Узел для GROUP BY clause"""
+
+    def __init__(self, expressions: List[ExprNode]):
+        super().__init__()
+        self.expressions = expressions
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return tuple(self.expressions)
+
+    def __str__(self) -> str:
+        return "GROUP BY"
+
+
+class HavingNode(AstNode):
+    """Узел для HAVING clause"""
+
+    def __init__(self, condition: AstNode):
+        super().__init__()
+        self.condition = condition
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return self.condition,
+
+    def __str__(self) -> str:
+        return "HAVING"
+
+
+class OrderByNode(AstNode):
+    """Узел для ORDER BY clause"""
+
+    def __init__(self, terms: List[OrderingTermNode]):
+        super().__init__()
+        self.terms = terms
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return tuple(self.terms)
+
+    def __str__(self) -> str:
+        return "ORDER BY"
 
 class StmtListNode(StmtNode):
     def __init__(self, *stmts: StmtNode):
@@ -419,7 +570,7 @@ class FuncCallNode(ExprNode):
     def __init__(self, name: str, args: List[ExprNode]):
         super().__init__()
         self.name = name
-        self.args = args
+        self.args = args if args is not None else []
 
     @property
     def childs(self) -> Tuple[ExprNode, ...]:
@@ -430,8 +581,10 @@ class FuncCallNode(ExprNode):
             return f"{self.name}(*)"
         elif len(self.args) == 1:
             return f"{self.name}({self.args[0]})"
+        elif len(self.args) == 0:
+            return f"{self.name}()"
         else:
-            args_str = ", ".join(str(arg) for arg in self.args)
+            args_str = ", ".join(str(arg) for arg in self.args if arg is not None)
             return f"{self.name}({args_str})"
 
 

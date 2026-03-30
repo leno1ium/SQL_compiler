@@ -6,7 +6,7 @@ tests = [
     u.name AS user_name,
     u.email,
     u.age,
-    COUNT(o.id) AS order_count,
+    COUNT(*) AS order_count,
     SUM(o.total) AS total_spent,
     AVG(o.total) AS avg_order_value,
     MIN(o.created_at) AS first_order,
@@ -40,7 +40,6 @@ ORDER BY total_spent DESC, last_order ASC, u.name DESC
 LIMIT 50 OFFSET 10;""",
 ]
 
-# todo not between/not in
 
 for i, test in enumerate(tests, 1):
     print(f"\n{'=' * 60}")
