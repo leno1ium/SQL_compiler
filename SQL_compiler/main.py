@@ -244,8 +244,7 @@ def run_test(executor: QueryExecutor, sql: str, description: str):
                         row_values.append(f"{str(v):<15}")
                 print(" | ".join(row_values))
 
-            if len(result) > 20:
-                print(f"... и еще {len(result) - 20} строк")
+            print(f"\nВсего строк: {len(result)}")
         else:
             print("Нет данных, удовлетворяющих условию")
 

@@ -563,3 +563,29 @@ class FuncCallNode(ExprNode):
         else:
             args_str = ", ".join(str(arg) for arg in self.args if arg is not None)
             return f"{self.name}({args_str})"
+
+
+class GroupByNode(AstNode):
+    def __init__(self, expressions: List[ExprNode]):
+        super().__init__()
+        self.expressions = expressions
+
+    @property
+    def childs(self) -> Tuple[AstNode, ...]:
+        return tuple(self.expressions)
+
+    def __str__(self) -> str:
+        return "GROUP BY"
+
+
+class HavingNode(AstNode):
+    def __init__(self, condition: ExprNode):
+        super().__init__()
+        self.condition = condition
+
+    @property
+    def childs(self) -> Tuple[ExprNode]:
+        return self.condition,
+
+    def __str__(self) -> str:
+        return "HAVING"

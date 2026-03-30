@@ -94,6 +94,8 @@ class Table:
             )
             print(row_str)
 
+        print(f"\nВсего строк: {len(self.rows)}")
+
 
 class ExcelLoader:
 
