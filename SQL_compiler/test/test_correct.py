@@ -38,8 +38,31 @@ HAVING COUNT(o.id) > 3
    AND AVG(o.total)  BETWEEN 0 AND 99
 ORDER BY total_spent DESC, last_order ASC, u.name DESC
 LIMIT 50 OFFSET 10;""",
-]
 
+    """SELECT 
+    p.category,
+    COUNT(o.user_id) AS unique_buyers,
+    MIN(p.price) * 1.1 AS min_with_tax,
+    MAX(p.price) - 5 AS max_discounted,
+    AVG(p.price) + 10 AS avg_plus_margin,
+    SUM(o.quantity) % 100 AS quantity_mod
+FROM products p
+RIGHT JOIN order_items oi ON p.id = oi.product_id
+CROSS JOIN categories c
+WHERE NOT (p.price < 10 OR p.price > 1000)
+  AND p.name LIKE '%phone%'
+  AND p.name NOT LIKE '%case%'
+  AND p.id IN (101, 202, 303)
+  AND p.id NOT IN (404, 505)
+  AND oi.discount IS NULL
+  AND oi.total BETWEEN 50 AND 500
+GROUP BY p.category
+HAVING COUNT(*) < 100
+   AND SUM(oi.quantity) NOT BETWEEN 0 AND 9
+   AND AVG(p.price) > 50
+ORDER BY unique_buyers DESC
+LIMIT 20;""",
+]
 
 for i, test in enumerate(tests, 1):
     print(f"\n{'=' * 60}")

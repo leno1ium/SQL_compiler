@@ -2,9 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Callable, Tuple, Optional, List
 from enum import Enum
 
-from lark import Token
-import json, time
-
 
 class AstNode(ABC):
     @property
@@ -20,32 +17,6 @@ class AstNode(ABC):
         res = [str(self)]
         childs = self.childs
         for i, child in enumerate(childs):
-            if not isinstance(child, AstNode):
-                # #region agent log
-                try:
-                    payload = {
-                        "sessionId": "f6bfae",
-                        "runId": "pre-fix",
-                        "hypothesisId": "H4",
-                        "location": "ast_nodes.py:AstNode.tree",
-                        "message": "Non-AstNode child encountered",
-                        "data": {
-                            "parent_type": type(self).__name__,
-                            "parent_str": str(self)[:120],
-                            "child_index": i,
-                            "child_type": type(child).__name__,
-                            "child_repr": repr(child)[:200],
-                            "child_str": str(child)[:200],
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    }
-                    with open(r"c:\Users\User\Desktop\SQL_compiler\debug-f6bfae.log", "a", encoding="utf-8") as f:
-                        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
-                # #endregion
-                # Preserve original failure signal, but clearer
-                raise AttributeError(f"Non-AstNode child in tree(): {type(child).__name__}")
             ch0, ch = '├', '│'
             if i == len(childs) - 1:
                 ch0, ch = '└', ' '
@@ -290,6 +261,7 @@ class SubQueryNode(ExprNode):
     def __str__(self) -> str:
         return 'EXISTS'
 
+
 class ExistsNode(ExprNode):
     def __init__(self, subquery: 'SelectStmtNode', negated: bool = False):
         super().__init__()
@@ -302,6 +274,7 @@ class ExistsNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT EXISTS' if self.negated else 'EXISTS'
+
 
 class InSubqueryNode(ExprNode):
     def __init__(self, expr: ExprNode, subquery: 'SelectStmtNode', negated: bool = False):
@@ -316,6 +289,8 @@ class InSubqueryNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT IN' if self.negated else 'IN'
+
+
 # select
 class SelectItemNode(AstNode):
     def __init__(self, expr: ExprNode, alias: Optional[str] = None):
@@ -377,6 +352,7 @@ class JoinNode(AstNode):
 
     def __str__(self) -> str:
         return self.join_type
+
 
 class OrderingTermNode(AstNode):
     def __init__(self, expr: ExprNode, direction: str = 'ASC'):
@@ -550,6 +526,7 @@ class OrderByNode(AstNode):
 
     def __str__(self) -> str:
         return "ORDER BY"
+
 
 class StmtListNode(StmtNode):
     def __init__(self, *stmts: StmtNode):

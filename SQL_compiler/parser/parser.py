@@ -72,6 +72,7 @@ class SQLASTBuilder(Transformer):
         return UnOpNode(UnOp.MINUS, node)
 
     def not_expr(self, args):
+        # args usually: [Token('NOT'), <expr>]
         node = next((a for a in args if isinstance(a, AstNode)), None)
         if node is None and len(args) >= 2:
             node = args[1]
@@ -90,19 +91,34 @@ class SQLASTBuilder(Transformer):
         return IsNullNode(args[0], negated=True)
 
     def mul(self, args):
-        return BinOpNode(BinOp.MUL, args[0], args[1])
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        left = nodes[0] if len(nodes) > 0 else args[0]
+        right = nodes[1] if len(nodes) > 1 else (args[2] if len(args) > 2 else args[-1])
+        return BinOpNode(BinOp.MUL, left, right)
 
     def div(self, args):
-        return BinOpNode(BinOp.DIV, args[0], args[1])
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        left = nodes[0] if len(nodes) > 0 else args[0]
+        right = nodes[1] if len(nodes) > 1 else (args[2] if len(args) > 2 else args[-1])
+        return BinOpNode(BinOp.DIV, left, right)
 
     def rem(self, args):
-        return BinOpNode(BinOp.REM, args[0], args[1])
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        left = nodes[0] if len(nodes) > 0 else args[0]
+        right = nodes[1] if len(nodes) > 1 else (args[2] if len(args) > 2 else args[-1])
+        return BinOpNode(BinOp.REM, left, right)
 
     def add(self, args):
-        return BinOpNode(BinOp.ADD, args[0], args[1])
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        left = nodes[0] if len(nodes) > 0 else args[0]
+        right = nodes[1] if len(nodes) > 1 else (args[2] if len(args) > 2 else args[-1])
+        return BinOpNode(BinOp.ADD, left, right)
 
     def sub(self, args):
-        return BinOpNode(BinOp.SUB, args[0], args[1])
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        left = nodes[0] if len(nodes) > 0 else args[0]
+        right = nodes[1] if len(nodes) > 1 else (args[2] if len(args) > 2 else args[-1])
+        return BinOpNode(BinOp.SUB, left, right)
 
     def gt(self, args):
         return BinOpNode(BinOp.GT, args[0], args[1])
@@ -440,6 +456,7 @@ class SQLASTBuilder(Transformer):
         if len(args) >= 2:
             return args[1]
         return None
+
     def where_expr(self, args):
         """Обработка WHERE выражения"""
         return args[0] if args else None
@@ -561,6 +578,10 @@ class SQLASTBuilder(Transformer):
 
     def __default__(self, data, children, meta):
         """Обработка неизвестных правил"""
+        if len(children) > 1:
+            filtered = [child for child in children if isinstance(child, AstNode)]
+            if len(filtered) == 1 and str(data) in {"atom", "unary_expr", "expr"}:
+                return filtered[0]
         if len(children) == 1 and isinstance(children[0], AstNode):
             return children[0]
         elif len(children) == 1:
