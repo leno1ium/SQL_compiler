@@ -22,8 +22,7 @@ class RowContext:
 
 
 class GroupContext:
-    def __init__(self, table: Optional[Table], rows: List[Dict[str, Any]]):
-        self.table = table
+    def __init__(self, rows: List[Dict[str, Any]]):
         self.rows = rows
 
     def get_aggregate(self, func_name: str, column: Optional[str] = None) -> Any:
@@ -68,14 +67,27 @@ class ExpressionEvaluator:
             return None
 
         elif isinstance(node, IdentNode):
-            if self.context is None:
-                raise RuntimeError("Cannot evaluate column without context")
-            return self.context.get_value(node.name)
+            if self.context is not None:
+                return self.context.get_value(node.name)
+            elif self.group_context is not None and self.group_context.rows:
+                first_row = self.group_context.rows[0]
+                if node.name in first_row:
+                    return first_row[node.name]
+                return None
+            else:
+                raise RuntimeError(f"Cannot evaluate column '{node.name}' without context")
 
         elif isinstance(node, CompoundIdentNode):
-            if self.context is None:
+            if self.context is not None:
+                return self.context.get_value(node.parts[-1])
+            elif self.group_context is not None and self.group_context.rows:
+                first_row = self.group_context.rows[0]
+                col_name = node.parts[-1]
+                if col_name in first_row:
+                    return first_row[col_name]
+                return None
+            else:
                 raise RuntimeError("Cannot evaluate column without context")
-            return self.context.get_value(node.parts[-1])
 
         elif isinstance(node, UnOpNode):
             arg = self.evaluate(node.arg)
@@ -122,7 +134,11 @@ class ExpressionEvaluator:
 
         elif isinstance(node, FuncCallNode):
             if self.group_context is not None:
-                column_name = node.args[0].name if node.args and hasattr(node.args[0], 'name') else None
+                column_name = None
+                if node.args and isinstance(node.args[0], IdentNode):
+                    column_name = node.args[0].name
+                elif node.args and isinstance(node.args[0], StarNode):
+                    column_name = None
                 return self.group_context.get_aggregate(node.name.upper(), column_name)
             elif self.context is not None:
                 if node.name.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX'):

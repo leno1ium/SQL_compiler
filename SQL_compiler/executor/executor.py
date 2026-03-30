@@ -24,7 +24,6 @@ class QueryExecutor:
 
         if stmt.distinct:
             result_rows = self._apply_distinct(result_rows)
-            print(f"После DISTINCT: {len(result_rows)} уникальных строк")
 
         if stmt.order_by:
             result_rows = self._apply_order_by(result_rows, stmt.order_by)
@@ -141,7 +140,10 @@ class QueryExecutor:
     def _create_temp_table(self, row: Dict[str, Any]) -> Table:
         table = Table("temp")
         for col, value in row.items():
-            col_type = type(value) if value is not None else str
+            if value is None:
+                col_type = str
+            else:
+                col_type = type(value)
             table.add_column(col, col_type)
         table.add_row(row)
         return table
@@ -164,7 +166,6 @@ class QueryExecutor:
             context = RowContext(temp_table, row)
             selected_row = self._project_row(select_list, context)
             result_rows.append(selected_row)
-        print(f"Найдено строк: {len(result_rows)}")
         return result_rows
 
     def _execute_group_by(self, rows: List[Dict[str, Any]], group_by: List[ExprNode],
@@ -181,7 +182,8 @@ class QueryExecutor:
                 try:
                     value = evaluator.evaluate(expr)
                     key_parts.append(value)
-                except Exception:
+                except Exception as e:
+                    print(f"Ошибка при вычислении GROUP BY: {e}")
                     key_parts.append(None)
             key = tuple(key_parts)
 
@@ -193,12 +195,16 @@ class QueryExecutor:
 
         for group_key, group_rows in groups.items():
             if having_clause:
-                group_context = GroupContext(None, group_rows)
+                group_context = GroupContext(group_rows)
                 evaluator = ExpressionEvaluator(None, group_context)
-                if not bool(evaluator.evaluate(having_clause)):
+                try:
+                    if not bool(evaluator.evaluate(having_clause)):
+                        continue
+                except Exception as e:
+                    print(f"Ошибка при вычислении HAVING: {e}")
                     continue
 
-            group_context = GroupContext(None, group_rows)
+            group_context = GroupContext(group_rows)
             evaluator = ExpressionEvaluator(None, group_context)
 
             row_dict = {}
@@ -210,14 +216,20 @@ class QueryExecutor:
                 else:
                     try:
                         value = evaluator.evaluate(item.expr)
-                        name = item.alias or str(item.expr)
+                        name = item.alias if item.alias else str(item.expr)
                         row_dict[name] = value
                     except Exception as e:
-                        print(f"Ошибка: {e}")
-                        row_dict[str(item.expr)] = None
+                        print(f"Ошибка при вычислении SELECT: {e}")
+                        name = item.alias or str(item.expr)
+                        row_dict[name] = None
+
+            for i, expr in enumerate(group_by):
+                col_name = str(expr)
+                if col_name not in row_dict:
+                    row_dict[col_name] = group_key[i] if i < len(group_key) else None
+
             result_rows.append(row_dict)
 
-        print(f"Групп: {len(groups)}, результирующих строк: {len(result_rows)}")
         return result_rows
 
     def _project_row(self, select_list: List[SelectItemNode], context: RowContext) -> Dict[str, Any]:
