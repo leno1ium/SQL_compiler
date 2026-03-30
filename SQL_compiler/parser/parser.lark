@@ -64,7 +64,9 @@ distinct: DISTINCT
 ident: IDENT -> simple_ident \
      | ident DOT IDENT -> compound_ident
 
-function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
+function_call: IDENT LPAREN (function_arg (COMMA function_arg)*)? RPAREN -> function_call
+
+function_arg: expr | STAR
 
 ?atom: num
      | string
@@ -112,14 +114,11 @@ function_call: IDENT LPAREN (expr (COMMA expr)*)? RPAREN -> function_call
              | in_expr BETWEEN in_expr AND in_expr -> between
              | in_expr NOT not_between_like_tail -> not_between_like
 
-?and_expr: between_expr
-         | and_expr AND between_expr -> and_expr
+?and_expr: between_expr (AND between_expr)*
 
-?or_expr: and_expr
-        | or_expr OR and_expr -> or_expr
+?or_expr: and_expr (OR and_expr)*
 
 expr: or_expr
-
 expr_list: expr (COMMA expr)*
 
 ?not_between_like_tail: BETWEEN in_expr AND in_expr -> not_between_tail
@@ -133,6 +132,10 @@ select_stmt: SELECT distinct? select_list \
              (ORDER BY ordering_term (COMMA ordering_term)*)? \
              (LIMIT expr (OFFSET expr)?)? \
              SEMICOLON? -> select_stmt
+
+where_clause: WHERE expr -> where_clause
+
+where_expr: expr -> where_expr
 
 select_list: select_item (COMMA select_item)* -> select_list
 
