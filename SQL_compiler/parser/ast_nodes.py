@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Tuple, Optional, List
 from enum import Enum
 
+from lark import Token
 
 class AstNode(ABC):
     @property
@@ -261,7 +262,6 @@ class SubQueryNode(ExprNode):
     def __str__(self) -> str:
         return 'EXISTS'
 
-
 class ExistsNode(ExprNode):
     def __init__(self, subquery: 'SelectStmtNode', negated: bool = False):
         super().__init__()
@@ -274,7 +274,6 @@ class ExistsNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT EXISTS' if self.negated else 'EXISTS'
-
 
 class InSubqueryNode(ExprNode):
     def __init__(self, expr: ExprNode, subquery: 'SelectStmtNode', negated: bool = False):
@@ -289,8 +288,6 @@ class InSubqueryNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT IN' if self.negated else 'IN'
-
-
 # select
 class SelectItemNode(AstNode):
     def __init__(self, expr: ExprNode, alias: Optional[str] = None):
@@ -352,7 +349,6 @@ class JoinNode(AstNode):
 
     def __str__(self) -> str:
         return self.join_type
-
 
 class OrderingTermNode(AstNode):
     def __init__(self, expr: ExprNode, direction: str = 'ASC'):
@@ -527,7 +523,6 @@ class OrderByNode(AstNode):
     def __str__(self) -> str:
         return "ORDER BY"
 
-
 class StmtListNode(StmtNode):
     def __init__(self, *stmts: StmtNode):
         super().__init__()
@@ -563,29 +558,3 @@ class FuncCallNode(ExprNode):
         else:
             args_str = ", ".join(str(arg) for arg in self.args if arg is not None)
             return f"{self.name}({args_str})"
-
-
-class GroupByNode(AstNode):
-    def __init__(self, expressions: List[ExprNode]):
-        super().__init__()
-        self.expressions = expressions
-
-    @property
-    def childs(self) -> Tuple[AstNode, ...]:
-        return tuple(self.expressions)
-
-    def __str__(self) -> str:
-        return "GROUP BY"
-
-
-class HavingNode(AstNode):
-    def __init__(self, condition: ExprNode):
-        super().__init__()
-        self.condition = condition
-
-    @property
-    def childs(self) -> Tuple[ExprNode]:
-        return self.condition,
-
-    def __str__(self) -> str:
-        return "HAVING"
