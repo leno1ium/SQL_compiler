@@ -1,0 +1,935 @@
+import sys
+import pandas as pd
+from pathlib import Path
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget, QTextEdit,
+    QTableWidget, QTableWidgetItem, QPushButton, QFileDialog,
+    QMenuBar, QMenu, QMessageBox, QToolBar, QComboBox,
+    QLabel, QFrame, QHeaderView, QAbstractItemView, QStyle,
+    QTabBar, QToolButton, QStyleOptionTab, QProxyStyle
+)
+from PySide6.QtCore import Qt, QSize, Signal, QTimer, QRect, QPoint
+from PySide6.QtGui import (
+    QFont, QColor, QPalette, QSyntaxHighlighter, QTextCharFormat,
+    QAction, QIcon, QPainter, QPen, QBrush
+)
+
+
+class CustomTabBar(QTabBar):
+    """Кастомный TabBar с правильной обработкой закрытия"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QTabBar::tab {
+                background-color: #1E1E1E;
+                color: #808080;
+                padding: 8px 20px 8px 15px;
+                margin-right: 0px;
+                border: none;
+                min-width: 100px;
+            }
+            QTabBar::tab:selected {
+                background-color: #2D2D2D;
+                color: #E0E0E0;
+            }
+            QTabBar::tab:hover {
+                background-color: #2A2A2A;
+            }
+            QTabBar::tab:!selected {
+                background-color: #1E1E1E;
+            }
+            QTabBar::close-button {
+                image: none;
+                subcontrol-position: right;
+                subcontrol-origin: padding;
+                margin-right: 1px;
+            }
+        """)
+
+        # Создаем кнопки закрытия для существующих вкладок
+        for i in range(self.count()):
+            self.setup_close_button(i)
+
+    def setup_close_button(self, index):
+        """Настройка кнопки закрытия вкладки"""
+        close_button = QToolButton(self)
+        close_button.setToolTip("Close tab")
+        close_button.setFixedSize(20, 20)
+
+        # Устанавливаем иконку X через текст
+        close_button.setText("×")
+        close_button.setStyleSheet("""
+            QToolButton {
+                background-color: transparent;
+                border: none;
+                color: #CCCCCC;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 0px;
+                margin-right: 3px;
+            }
+            QToolButton:hover {
+                color: #FFFFFF;
+                background-color: transparent;
+            }
+        """)
+
+        # Подключаем сигнал закрытия
+        close_button.clicked.connect(lambda: self.tabCloseRequested.emit(index))
+
+        self.setTabButton(index, QTabBar.RightSide, close_button)
+
+    def tabInserted(self, index):
+        """Вызывается при добавлении новой вкладки"""
+        super().tabInserted(index)
+        self.setup_close_button(index)
+
+
+class CustomTabWidget(QTabWidget):
+    """Кастомный TabWidget с кнопкой добавления"""
+
+    def __init__(self, parent=None, show_add_button=True):
+        super().__init__(parent)
+
+        # Заменяем стандартный TabBar на кастомный
+        tab_bar = CustomTabBar(self)
+        self.setTabBar(tab_bar)
+
+        self.setTabsClosable(True)
+        self.show_add_button = show_add_button
+
+        if show_add_button:
+            # Создаем кнопку добавления
+            self.add_button = QToolButton(self)
+            self.add_button.setText("+")
+            self.add_button.setToolTip("New tab")
+            self.add_button.setStyleSheet("""
+                QToolButton {
+                    background-color: transparent;
+                    color: #808080;
+                    border: none;
+                    font-size: 16px;
+                    font-weight: bold;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                }
+                QToolButton:hover {
+                    background-color: #3E3E3E;
+                    color: #CCCCCC;
+                }
+            """)
+            self.add_button.clicked.connect(self.on_add_clicked)
+
+        self.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                background-color: #1E1E1E;
+            }
+        """)
+
+    def on_add_clicked(self):
+        """Обработчик нажатия на кнопку добавления"""
+        pass
+
+    def resizeEvent(self, event):
+        """Позиционирование кнопки добавления"""
+        super().resizeEvent(event)
+        if self.show_add_button:
+            self.update_add_button_position()
+
+    def update_add_button_position(self):
+        """Обновление позиции кнопки добавления"""
+        if self.show_add_button and self.count() > 0:
+            tab_bar = self.tabBar()
+            last_tab_rect = tab_bar.tabRect(self.count() - 1)
+            x = last_tab_rect.right() + 5
+            y = (tab_bar.height() - self.add_button.height()) // 2
+            self.add_button.move(x, y)
+        elif self.show_add_button:
+            self.add_button.move(5, 5)
+
+
+class SQLSyntaxHighlighter(QSyntaxHighlighter):
+    """Подсветка синтаксиса SQL"""
+
+    def __init__(self, document):
+        super().__init__(document)
+
+        self.keywords = [
+            'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE',
+            'CREATE', 'DROP', 'ALTER', 'TABLE', 'INDEX', 'VIEW',
+            'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'ON',
+            'GROUP BY', 'ORDER BY', 'HAVING', 'UNION', 'ALL',
+            'AND', 'OR', 'NOT', 'IN', 'EXISTS', 'BETWEEN', 'LIKE',
+            'NULL', 'TRUE', 'FALSE', 'DISTINCT', 'AS', 'INTO',
+            'VALUES', 'SET', 'LIMIT', 'OFFSET'
+        ]
+
+        self.functions = [
+            'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'COALESCE',
+            'CAST', 'CONVERT', 'SUBSTRING', 'UPPER', 'LOWER',
+            'LENGTH', 'TRIM', 'ROUND', 'DATE', 'DATETIME'
+        ]
+
+        self.keyword_format = QTextCharFormat()
+        self.keyword_format.setForeground(QColor("#569CD6"))
+        self.keyword_format.setFontWeight(QFont.Bold)
+
+        self.function_format = QTextCharFormat()
+        self.function_format.setForeground(QColor("#DCDCAA"))
+
+        self.string_format = QTextCharFormat()
+        self.string_format.setForeground(QColor("#CE9178"))
+
+        self.number_format = QTextCharFormat()
+        self.number_format.setForeground(QColor("#B5CEA8"))
+
+        self.comment_format = QTextCharFormat()
+        self.comment_format.setForeground(QColor("#6A9955"))
+
+    def highlightBlock(self, text):
+        # Подсветка комментариев
+        if '--' in text:
+            index = text.index('--')
+            self.setFormat(index, len(text) - index, self.comment_format)
+
+        # Подсветка строк
+        in_string = False
+        string_start = 0
+        for i, char in enumerate(text):
+            if char == "'" and not in_string:
+                in_string = True
+                string_start = i
+            elif char == "'" and in_string:
+                in_string = False
+                self.setFormat(string_start, i - string_start + 1, self.string_format)
+
+        # Подсветка ключевых слов
+        for keyword in self.keywords:
+            index = text.upper().find(keyword)
+            while index >= 0:
+                if (index == 0 or not text[index - 1].isalnum()) and \
+                        (index + len(keyword) == len(text) or not text[index + len(keyword)].isalnum()):
+                    self.setFormat(index, len(keyword), self.keyword_format)
+                index = text.upper().find(keyword, index + 1)
+
+        # Подсветка функций
+        for func in self.functions:
+            index = text.upper().find(func + '(')
+            while index >= 0:
+                if index == 0 or not text[index - 1].isalnum():
+                    self.setFormat(index, len(func), self.function_format)
+                index = text.upper().find(func + '(', index + 1)
+
+
+class ModernTreeWidget(QTreeWidget):
+    """Современное дерево для отображения структуры БД"""
+
+    def __init__(self):
+        super().__init__()
+        self.setHeaderHidden(True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setStyleSheet("""
+            QTreeWidget {
+                background-color: #1E1E1E;
+                color: #CCCCCC;
+                border: none;
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QTreeWidget::item {
+                padding: 6px;
+                border-radius: 4px;
+                color: #CCCCCC;
+                background-color: transparent;
+            }
+            QTreeWidget::item:hover {
+                background-color: transparent;
+            }
+            QTreeWidget::item:selected {
+                background-color: transparent;
+                color: #CCCCCC;
+            }
+            QTreeWidget::branch {
+                background-color: transparent;
+            }
+            QTreeWidget::branch:selected {
+                background-color: transparent;
+            }
+        """)
+
+    def mousePressEvent(self, event):
+        """Обработка нажатия мыши для расширения области клика по ветви"""
+        # Используем position() вместо устаревшего pos()
+        pos = event.position().toPoint()
+        item = self.itemAt(pos)
+
+        if item and item.childCount() > 0:
+            # Проверяем, попали ли мы в область ветви (плюсика)
+            index = self.indexFromItem(item)
+            rect = self.visualRect(index)
+
+            # Расширяем область клика для ветви
+            branch_rect = QRect(rect.x(), rect.y(), 30, rect.height())
+            if branch_rect.contains(pos):
+                # Переключаем состояние развернуто/свернуто
+                self.setItemExpanded(item, not self.isItemExpanded(item))
+                return
+
+        super().mousePressEvent(event)
+
+    def drawBranches(self, painter, rect, index):
+        """Кастомная отрисовка ветвей дерева"""
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        if self.model().hasChildren(index):
+            painter.setPen(QPen(QColor("#808080"), 1))
+
+            center_x = rect.x() + 15  # Фиксированная позиция для плюсика
+            center_y = rect.y() + rect.height() // 2
+
+            if self.isExpanded(index):
+                # Рисуем минус
+                painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
+            else:
+                # Рисуем плюс
+                painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
+                painter.drawLine(center_x, center_y - 4, center_x, center_y + 4)
+
+
+class ModernTableWidget(QTableWidget):
+    """Современная таблица для отображения результатов"""
+
+    def __init__(self):
+        super().__init__()
+        self.setAlternatingRowColors(False)
+        self.verticalHeader().setVisible(True)
+        self.verticalHeader().setDefaultAlignment(Qt.AlignCenter)
+
+        self.setStyleSheet("""
+            QTableWidget {
+                background-color: #1E1E1E;
+                color: #CCCCCC;
+                gridline-color: #2D2D2D;
+                border: none;
+                border-radius: 8px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #2D2D2D;
+                border-right: 1px solid #2D2D2D;
+            }
+            QTableWidget::item:selected {
+                background-color: #3E3E3E;
+            }
+            QHeaderView::section {
+                background-color: #252526;
+                color: #E0E0E0;
+                padding: 8px;
+                border: none;
+                border-right: 1px solid #3E3E3E;
+                border-bottom: 2px solid #3E3E3E;
+                font-weight: bold;
+            }
+            QTableWidget QTableCornerButton::section {
+                background-color: #252526;
+                border: 1px solid #3E3E3E;
+            }
+            QHeaderView::section:vertical {
+                background-color: #252526;
+                color: #808080;
+                border-right: 2px solid #3E3E3E;
+                border-bottom: 1px solid #2D2D2D;
+                padding: 4px 8px;
+            }
+        """)
+
+    def setDataFrame(self, df):
+        """Заполнение таблицы из DataFrame"""
+        self.setRowCount(len(df))
+        self.setColumnCount(len(df.columns))
+        self.setHorizontalHeaderLabels(df.columns)
+
+        # Устанавливаем номера строк
+        row_headers = [str(i + 1) for i in range(len(df))]
+        self.setVerticalHeaderLabels(row_headers)
+
+        for i, row in df.iterrows():
+            for j, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.setItem(i, j, item)
+
+
+class ModernSQLTextEdit(QTextEdit):
+    """Современный редактор SQL с подсветкой синтаксиса"""
+
+    def __init__(self):
+        super().__init__()
+        self.setFont(QFont("Consolas", 11))
+        self.setStyleSheet("""
+            QTextEdit {
+                background-color: #1E1E1E;
+                color: #D4D4D4;
+                border: 1px solid #3E3E3E;
+                border-radius: 8px;
+                padding: 10px;
+                selection-background-color: #264F78;
+            }
+        """)
+        self.highlighter = SQLSyntaxHighlighter(self.document())
+        self.setTabStopDistance(40)
+
+        # Добавляем отступы через setViewportMargins (слева и снизу по 3 пикселя)
+        self.setViewportMargins(3, 0, 0, 3)
+
+
+class DatabaseViewer(QMainWindow):
+    """Главное окно приложения"""
+
+    def __init__(self):
+        super().__init__()
+        self.current_db = None
+        self.db_tables = {}
+        self.query_counter = 1
+        self.table_view_counter = 1
+        self.left_panel_visible = True
+        self.init_ui()
+        self.apply_dark_theme()
+
+    def init_ui(self):
+        """Инициализация пользовательского интерфейса"""
+        self.setWindowTitle("Modern SQL Query Tool")
+        self.setGeometry(100, 100, 1400, 900)
+
+        # Создание центрального виджета
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(5)
+
+        # Создание меню
+        self.create_menu_bar()
+
+        # Создание тулбара
+        self.create_toolbar()
+
+        # Основной сплиттер
+        self.main_splitter = QSplitter(Qt.Horizontal)
+
+        # Левая панель - дерево БД
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.db_tree = ModernTreeWidget()
+        self.db_tree.itemClicked.connect(self.on_tree_item_clicked)
+        left_layout.addWidget(self.db_tree)
+
+        self.left_panel = left_widget
+        self.main_splitter.addWidget(left_widget)
+
+        # Правая панель
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(5)
+
+        # Верхняя часть правой панели - редактор запросов
+        editor_widget = QWidget()
+        editor_layout = QVBoxLayout(editor_widget)
+        editor_layout.setContentsMargins(3, 0, 0, 0)  # Добавляем отступ слева
+        editor_layout.setSpacing(5)
+
+        # Кнопки управления запросами
+        query_buttons_layout = QHBoxLayout()
+        query_buttons_layout.setSpacing(8)
+
+        self.execute_btn = QPushButton("Execute")
+        self.execute_btn.clicked.connect(self.execute_query)
+        self.execute_btn.setStyleSheet(self.get_button_style("#0E639C", "#1177BB"))
+
+        self.save_query_btn = QPushButton("Save Query")
+        self.save_query_btn.clicked.connect(self.save_query_to_file)
+        self.save_query_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
+
+        self.load_script_btn = QPushButton("Load Script")
+        self.load_script_btn.clicked.connect(self.load_script)
+        self.load_script_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
+
+        query_buttons_layout.addWidget(self.execute_btn)
+        query_buttons_layout.addWidget(self.save_query_btn)
+        query_buttons_layout.addWidget(self.load_script_btn)
+        query_buttons_layout.addStretch()
+
+        editor_layout.addLayout(query_buttons_layout)
+
+        # Вкладки для запросов
+        self.query_tabs = CustomTabWidget(show_add_button=True)
+        self.query_tabs.tabCloseRequested.connect(self.close_query_tab)
+        self.query_tabs.add_button.clicked.connect(self.create_new_query_tab)
+
+        # Создаем первую вкладку для запросов
+        self.create_new_query_tab()
+
+        editor_layout.addWidget(self.query_tabs)
+
+        # Нижняя часть правой панели - результаты
+        results_widget = QWidget()
+        results_layout = QVBoxLayout(results_widget)
+        results_layout.setContentsMargins(3, 0, 0, 0)  # Добавляем отступ слева
+
+        results_label = QLabel("Query Results")
+        results_label.setStyleSheet("color: #CCCCCC; font-weight: bold; padding: 5px;")
+        results_layout.addWidget(results_label)
+
+        self.results_table = ModernTableWidget()
+        results_layout.addWidget(self.results_table)
+
+        # Создаем сплиттер для редактора и результатов
+        vertical_splitter = QSplitter(Qt.Vertical)
+        vertical_splitter.addWidget(editor_widget)
+        vertical_splitter.addWidget(results_widget)
+        vertical_splitter.setSizes([400, 400])
+
+        right_layout.addWidget(vertical_splitter)
+
+        # Вкладки для просмотра таблиц
+        self.table_tabs = CustomTabWidget(show_add_button=False)
+        self.table_tabs.tabCloseRequested.connect(self.close_table_tab)
+        self.table_tabs.setVisible(False)
+        right_layout.addWidget(self.table_tabs)
+
+        self.main_splitter.addWidget(right_widget)
+        self.main_splitter.setSizes([300, 1100])
+
+        main_layout.addWidget(self.main_splitter)
+
+    def create_menu_bar(self):
+        """Создание меню"""
+        menubar = self.menuBar()
+        menubar.setStyleSheet("""
+            QMenuBar {
+                background-color: #2D2D2D;
+                color: #CCCCCC;
+                border-bottom: 1px solid #3E3E3E;
+                padding: 4px;
+            }
+            QMenuBar::item:selected {
+                background-color: #3E3E3E;
+                border-radius: 4px;
+            }
+            QMenu {
+                background-color: #2D2D2D;
+                color: #CCCCCC;
+                border: 1px solid #3E3E3E;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #094771;
+                border-radius: 4px;
+            }
+        """)
+
+        # Меню File
+        file_menu = menubar.addMenu("File")
+
+        load_db_action = QAction("Load Database (Excel)", self)
+        load_db_action.triggered.connect(self.load_database)
+        file_menu.addAction(load_db_action)
+
+        load_script_action = QAction("Load SQL Script", self)
+        load_script_action.triggered.connect(self.load_script)
+        file_menu.addAction(load_script_action)
+
+        save_script_action = QAction("Save Current Script", self)
+        save_script_action.triggered.connect(self.save_query_to_file)
+        file_menu.addAction(save_script_action)
+
+        file_menu.addSeparator()
+
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Меню View
+        view_menu = menubar.addMenu("View")
+
+        toggle_panel_action = QAction("Toggle Left Panel", self)
+        toggle_panel_action.triggered.connect(self.toggle_left_panel)
+        view_menu.addAction(toggle_panel_action)
+
+        # Меню Query
+        query_menu = menubar.addMenu("Query")
+
+        execute_action = QAction("Execute", self)
+        execute_action.triggered.connect(self.execute_query)
+        query_menu.addAction(execute_action)
+
+        new_query_action = QAction("New Query Tab", self)
+        new_query_action.triggered.connect(self.create_new_query_tab)
+        query_menu.addAction(new_query_action)
+
+    def create_toolbar(self):
+        """Создание тулбара"""
+        toolbar = QToolBar()
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #2D2D2D;
+                border: none;
+                border-radius: 6px;
+                padding: 4px;
+                spacing: 0px;
+            }
+            QToolBar::separator {
+                width: 0px;
+                height: 0px;
+            }
+            QToolButton {
+                background-color: transparent;
+                color: #CCCCCC;
+                border-radius: 4px;
+                padding: 6px 12px;
+                margin: 0px 2px;
+            }
+            QToolButton:hover {
+                background-color: #3E3E3E;
+            }
+            QToolButton:pressed {
+                background-color: #094771;
+            }
+        """)
+        self.addToolBar(toolbar)
+
+        # Кнопка переключения левой панели
+        toggle_panel_btn = QToolButton()
+        toggle_panel_btn.setText("☰")
+        toggle_panel_btn.setToolTip("Toggle Left Panel")
+        toggle_panel_btn.clicked.connect(self.toggle_left_panel)
+        toggle_panel_btn.setStyleSheet("""
+            QToolButton {
+                font-size: 16px;
+                font-weight: bold;
+            }
+        """)
+        toolbar.addWidget(toggle_panel_btn)
+
+        # Добавляем действия
+        load_db_btn = QPushButton("Load DB")
+        load_db_btn.clicked.connect(self.load_database)
+        load_db_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
+        toolbar.addWidget(load_db_btn)
+
+
+    def toggle_left_panel(self):
+        """Переключение видимости левой панели"""
+        if self.left_panel_visible:
+            self.left_panel.hide()
+            self.left_panel_visible = False
+        else:
+            self.left_panel.show()
+            self.left_panel_visible = True
+
+    def get_button_style(self, bg_color, hover_color):
+        """Стиль для кнопок"""
+        return f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {bg_color};
+            }}
+        """
+
+    def apply_dark_theme(self):
+        """Применение темной темы"""
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1E1E1E;
+            }
+            QWidget {
+                background-color: #1E1E1E;
+                color: #CCCCCC;
+            }
+            QSplitter::handle {
+                background-color: #3E3E3E;
+                width: 2px;
+                height: 2px;
+            }
+            QScrollBar:vertical {
+                background-color: #2D2D2D;
+                width: 5px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #5E5E5E;
+                border-radius: 2px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #7E7E7E;
+            }
+            QScrollBar:horizontal {
+                background-color: #2D2D2D;
+                height: 5px;
+                border-radius: 2px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #5E5E5E;
+                border-radius: 2px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #7E7E7E;
+            }
+            QScrollBar::add-line, QScrollBar::sub-line {
+                border: none;
+                background: none;
+                width: 0px;
+                height: 0px;
+            }
+            QScrollBar::add-page, QScrollBar::sub-page {
+                background: none;
+            }
+        """)
+
+    def load_database(self):
+        """Загрузка базы данных из Excel"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Load Database", "", "Excel Files (*.xlsx *.xls)"
+        )
+
+        if file_path:
+            try:
+                self.current_db = pd.ExcelFile(file_path)
+                self.db_tables = {}
+
+                # Загружаем все листы как таблицы
+                for sheet_name in self.current_db.sheet_names:
+                    self.db_tables[sheet_name] = pd.read_excel(self.current_db, sheet_name)
+
+                self.update_db_tree()
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load database: {str(e)}")
+
+    def update_db_tree(self):
+        """Обновление дерева базы данных"""
+        self.db_tree.clear()
+
+        if not self.db_tables:
+            return
+
+        root = QTreeWidgetItem(self.db_tree, ["Database"])
+        root.setExpanded(True)
+
+        for table_name, df in self.db_tables.items():
+            table_item = QTreeWidgetItem(root, [table_name])
+
+            # Добавляем колонки напрямую
+            for col in df.columns:
+                col_type = str(df[col].dtype)
+                QTreeWidgetItem(table_item, [f"{col} : {col_type}"])
+
+    def on_tree_item_clicked(self, item, column):
+        """Обработка клика по элементу дерева"""
+        if item.parent() and item.parent().text(0) != "Database":
+            # Это колонка, игнорируем
+            return
+        elif item.parent() and item.parent().text(0) == "Database":
+            # Это таблица
+            table_name = item.text(0)
+            self.show_table_contents(table_name)
+
+    def show_table_contents(self, table_name):
+        """Показать содержимое таблицы в новой вкладке"""
+        if table_name not in self.db_tables:
+            return
+
+        self.table_tabs.setVisible(True)
+
+        # Создаем новую вкладку
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+
+        table = ModernTableWidget()
+        df = self.db_tables[table_name]
+
+        table.setDataFrame(df)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        tab_layout.addWidget(table)
+
+        self.table_tabs.addTab(tab_widget, table_name)
+        self.table_tabs.setCurrentWidget(tab_widget)
+
+    def create_new_query_tab(self):
+        """Создание новой вкладки для запроса"""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        query_editor = ModernSQLTextEdit()
+        query_editor.setPlaceholderText("Enter your SQL query here...")
+
+        tab_layout.addWidget(query_editor)
+
+        tab_name = f"Query {self.query_counter}"
+        self.query_counter += 1
+
+        self.query_tabs.addTab(tab_widget, tab_name)
+        self.query_tabs.setCurrentWidget(tab_widget)
+        self.query_tabs.update_add_button_position()
+
+    def close_query_tab(self, index):
+        """Закрытие вкладки запроса"""
+        if self.query_tabs.count() > 1:
+            self.query_tabs.removeTab(index)
+            self.query_tabs.update_add_button_position()
+        else:
+            # Не закрываем последнюю вкладку
+            self.create_new_query_tab()
+
+    def close_table_tab(self, index):
+        """Закрытие вкладки таблицы"""
+        self.table_tabs.removeTab(index)
+        if self.table_tabs.count() == 0:
+            self.table_tabs.setVisible(False)
+
+    def execute_query(self):
+        """Выполнение SQL запроса"""
+        current_tab = self.query_tabs.currentWidget()
+        if not current_tab:
+            return
+
+        query_editor = current_tab.findChild(QTextEdit)
+        if not query_editor:
+            return
+
+        query = query_editor.toPlainText().strip()
+
+        if not query:
+            QMessageBox.warning(self, "Warning", "Query is empty")
+            return
+
+        if not self.db_tables:
+            QMessageBox.warning(self, "Warning", "No database loaded")
+            return
+
+        try:
+            # Простой парсер SQL для демонстрации
+            result_df = self.execute_sql_query(query)
+
+            if result_df is not None:
+                self.results_table.setDataFrame(result_df)
+            else:
+                QMessageBox.information(self, "Info", "Query executed (no results)")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
+
+    def execute_sql_query(self, query):
+        """Выполнение SQL запроса (упрощенная версия)"""
+        import re
+
+        query_upper = query.upper()
+
+        if query_upper.startswith("SELECT"):
+            # Простой парсер SELECT запросов
+            from_match = re.search(r'FROM\s+(\w+)', query_upper)
+            if from_match:
+                table_name = from_match.group(1)
+                # Находим оригинальное имя таблицы (с учетом регистра)
+                original_table = None
+                for name in self.db_tables.keys():
+                    if name.upper() == table_name:
+                        original_table = name
+                        break
+
+                if original_table:
+                    df = self.db_tables[original_table]
+
+                    # Простая фильтрация WHERE
+                    where_match = re.search(r'WHERE\s+(.+?)(?:ORDER BY|GROUP BY|$)', query, re.IGNORECASE)
+                    if where_match:
+                        condition = where_match.group(1).strip()
+                        # Очень упрощенная обработка WHERE
+                        if '=' in condition:
+                            col, val = condition.split('=')
+                            col = col.strip()
+                            val = val.strip().strip("'\"")
+                            if col in df.columns:
+                                df = df[df[col].astype(str) == val]
+
+                    return df
+
+        return None
+
+    def load_script(self):
+        """Загрузка SQL скрипта из файла"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Load SQL Script", "", "SQL Files (*.sql);;Text Files (*.txt);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                current_tab = self.query_tabs.currentWidget()
+                if current_tab:
+                    query_editor = current_tab.findChild(QTextEdit)
+                    if query_editor:
+                        query_editor.setText(content)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load script: {str(e)}")
+
+    def save_query_to_file(self):
+        """Сохранение запроса в файл"""
+        current_tab = self.query_tabs.currentWidget()
+        if not current_tab:
+            return
+
+        query_editor = current_tab.findChild(QTextEdit)
+        if not query_editor:
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save SQL Script", "query.sql", "SQL Files (*.sql);;Text Files (*.txt);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(query_editor.toPlainText())
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save script: {str(e)}")
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')
+
+    window = DatabaseViewer()
+    window.show()
+
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
