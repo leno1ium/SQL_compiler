@@ -53,32 +53,29 @@ class CustomTabBar(QTabBar):
             self.setup_close_button(i)
 
     def setup_close_button(self, index):
-        """Настройка кнопки закрытия вкладки"""
         close_button = QToolButton(self)
-        close_button.setToolTip("Close tab")
-        close_button.setFixedSize(20, 20)
-
-        # Устанавливаем иконку X через текст
         close_button.setText("×")
+        close_button.setFixedSize(18, 18)
+
         close_button.setStyleSheet("""
             QToolButton {
-                background-color: transparent;
+                background: transparent;
                 border: none;
-                color: #CCCCCC;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 0px;
-                margin-right: 3px;
+                color: #888;
+                font-size: 14px;
             }
             QToolButton:hover {
-                color: #FFFFFF;
-                background-color: transparent;
+                color: #fff;
             }
         """)
 
-        # Подключаем сигнал закрытия
-        close_button.clicked.connect(lambda: self.tabCloseRequested.emit(index))
+        def on_close_clicked():
+            for i in range(self.count()):
+                if self.tabButton(i, QTabBar.RightSide) is close_button:
+                    self.tabCloseRequested.emit(i)
+                    break
 
+        close_button.clicked.connect(on_close_clicked)
         self.setTabButton(index, QTabBar.RightSide, close_button)
 
     def tabInserted(self, index):
@@ -88,23 +85,30 @@ class CustomTabBar(QTabBar):
 
 
 class CustomTabWidget(QTabWidget):
-    """Кастомный TabWidget с кнопкой добавления"""
+    """
+    Кастомный TabWidget:
+    - кастомный TabBar
+    - кнопка "+"
+    - удобные методы для поиска / активации вкладок
+    """
 
     def __init__(self, parent=None, show_add_button=True):
         super().__init__(parent)
 
-        # Заменяем стандартный TabBar на кастомный
-        tab_bar = CustomTabBar(self)
-        self.setTabBar(tab_bar)
-
+        # 🔁 Кастомный TabBar (крестик + middle-click)
+        self.setTabBar(CustomTabBar(self))
         self.setTabsClosable(True)
-        self.show_add_button = show_add_button
 
-        if show_add_button:
-            # Создаем кнопку добавления
+        self.show_add_button = show_add_button
+        self.add_button = None
+
+        if self.show_add_button:
             self.add_button = QToolButton(self)
             self.add_button.setText("+")
             self.add_button.setToolTip("New tab")
+            self.add_button.setCursor(Qt.PointingHandCursor)
+            self.add_button.setFixedHeight(24)
+
             self.add_button.setStyleSheet("""
                 QToolButton {
                     background-color: transparent;
@@ -120,6 +124,7 @@ class CustomTabWidget(QTabWidget):
                     color: #CCCCCC;
                 }
             """)
+
             self.add_button.clicked.connect(self.on_add_clicked)
 
         self.setStyleSheet("""
@@ -129,28 +134,70 @@ class CustomTabWidget(QTabWidget):
             }
         """)
 
+    # ------------------------------------------------------------------
+    # API ДЛЯ НЕДУБЛИРОВАНИЯ ВКЛАДОК
+    # ------------------------------------------------------------------
+
+    def find_tab_by_text(self, text: str) -> int:
+        """Вернуть индекс вкладки по имени или -1"""
+        for i in range(self.count()):
+            if self.tabText(i) == text:
+                return i
+        return -1
+
+    def activate_tab(self, text: str) -> bool:
+        """Активировать вкладку, если существует"""
+        index = self.find_tab_by_text(text)
+        if index != -1:
+            self.setCurrentIndex(index)
+            return True
+        return False
+
+    def add_tab_unique(self, widget: QWidget, title: str):
+        """
+        Добавить вкладку только если её нет.
+        Если есть — просто активировать.
+        """
+        index = self.find_tab_by_text(title)
+        if index != -1:
+            self.setCurrentIndex(index)
+            return index
+
+        index = self.addTab(widget, title)
+        self.setCurrentIndex(index)
+        self.update_add_button_position()
+        return index
+
+    # ------------------------------------------------------------------
+    # КНОПКА "+"
+    # ------------------------------------------------------------------
+
     def on_add_clicked(self):
-        """Обработчик нажатия на кнопку добавления"""
+        """Переопределяется снаружи"""
         pass
 
+    # ------------------------------------------------------------------
+    # ПОЗИЦИОНИРОВАНИЕ "+"
+    # ------------------------------------------------------------------
+
     def resizeEvent(self, event):
-        """Позиционирование кнопки добавления"""
         super().resizeEvent(event)
-        if self.show_add_button:
-            self.update_add_button_position()
+        self.update_add_button_position()
 
     def update_add_button_position(self):
-        """Обновление позиции кнопки добавления"""
-        if self.show_add_button and self.count() > 0:
-            tab_bar = self.tabBar()
+        if not self.show_add_button or not self.add_button:
+            return
+
+        tab_bar = self.tabBar()
+
+        if self.count() > 0:
             last_tab_rect = tab_bar.tabRect(self.count() - 1)
-            x = last_tab_rect.right() + 5
-            y = (tab_bar.height() - self.add_button.height()) // 2
-            self.add_button.move(x, y)
-        elif self.show_add_button:
-            self.add_button.move(5, 5)
+            x = last_tab_rect.right() + 6
+        else:
+            x = 6
 
-
+        y = (tab_bar.height() - self.add_button.height()) // 2
+        self.add_button.move(x, y)
 class SQLSyntaxHighlighter(QSyntaxHighlighter):
     """Подсветка синтаксиса SQL"""
 
@@ -275,7 +322,7 @@ class ModernTreeWidget(QTreeWidget):
             branch_rect = QRect(rect.x(), rect.y(), 30, rect.height())
             if branch_rect.contains(pos):
                 # Переключаем состояние развернуто/свернуто
-                self.setItemExpanded(item, not self.isItemExpanded(item))
+                item.setExpanded(not item.isExpanded())
                 return
 
         super().mousePressEvent(event)
@@ -304,6 +351,7 @@ class ModernTableWidget(QTableWidget):
 
     def __init__(self):
         super().__init__()
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setAlternatingRowColors(False)
         self.verticalHeader().setVisible(True)
         self.verticalHeader().setDefaultAlignment(Qt.AlignCenter)
@@ -374,7 +422,7 @@ class ModernSQLTextEdit(QTextEdit):
             QTextEdit {
                 background-color: #1E1E1E;
                 color: #D4D4D4;
-                border: 1px solid #3E3E3E;
+                border: none;
                 border-radius: 8px;
                 padding: 10px;
                 selection-background-color: #264F78;
@@ -386,7 +434,6 @@ class ModernSQLTextEdit(QTextEdit):
         # Добавляем отступы через setViewportMargins (слева и снизу по 3 пикселя)
         self.setViewportMargins(3, 0, 0, 3)
 
-
 class DatabaseViewer(QMainWindow):
     """Главное окно приложения"""
 
@@ -396,6 +443,7 @@ class DatabaseViewer(QMainWindow):
         self.db_tables = {}
         self.query_counter = 1
         self.table_view_counter = 1
+        self.open_table_tabs = {}  # table_name -> tab index
         self.left_panel_visible = True
         self.init_ui()
         self.apply_dark_theme()
@@ -483,12 +531,24 @@ class DatabaseViewer(QMainWindow):
         results_layout = QVBoxLayout(results_widget)
         results_layout.setContentsMargins(3, 0, 0, 0)  # Добавляем отступ слева
 
+        results_header_layout = QHBoxLayout()
+
         results_label = QLabel("Query Results")
         results_label.setStyleSheet("color: #CCCCCC; font-weight: bold; padding: 5px;")
-        results_layout.addWidget(results_label)
+
+        self.rows_info_label = QLabel("")
+        self.rows_info_label.setStyleSheet("color: #808080; padding: 5px;")
+
+        results_header_layout.addWidget(results_label)
+        results_header_layout.addStretch()
+        results_header_layout.addWidget(self.rows_info_label)
+
+        results_layout.addLayout(results_header_layout)
 
         self.results_table = ModernTableWidget()
         results_layout.addWidget(self.results_table)
+
+
 
         # Создаем сплиттер для редактора и результатов
         vertical_splitter = QSplitter(Qt.Vertical)
@@ -755,15 +815,22 @@ class DatabaseViewer(QMainWindow):
             self.show_table_contents(table_name)
 
     def show_table_contents(self, table_name):
-        """Показать содержимое таблицы в новой вкладке"""
+        """Показать содержимое таблицы (без дубликатов вкладок)"""
         if table_name not in self.db_tables:
             return
 
         self.table_tabs.setVisible(True)
 
-        # Создаем новую вкладку
+        # ✅ Если вкладка уже существует — просто активируем
+        if table_name in self.open_table_tabs:
+            index = self.open_table_tabs[table_name]
+            self.table_tabs.setCurrentIndex(index)
+            return
+
+        # ❗ Создаём новую вкладку
         tab_widget = QWidget()
         tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
 
         table = ModernTableWidget()
         df = self.db_tables[table_name]
@@ -773,8 +840,9 @@ class DatabaseViewer(QMainWindow):
 
         tab_layout.addWidget(table)
 
-        self.table_tabs.addTab(tab_widget, table_name)
-        self.table_tabs.setCurrentWidget(tab_widget)
+        index = self.table_tabs.addTab(tab_widget, table_name)
+        self.open_table_tabs[table_name] = index
+        self.table_tabs.setCurrentIndex(index)
 
     def create_new_query_tab(self):
         """Создание новой вкладки для запроса"""
@@ -796,16 +864,32 @@ class DatabaseViewer(QMainWindow):
 
     def close_query_tab(self, index):
         """Закрытие вкладки запроса"""
-        if self.query_tabs.count() > 1:
-            self.query_tabs.removeTab(index)
-            self.query_tabs.update_add_button_position()
-        else:
-            # Не закрываем последнюю вкладку
-            self.create_new_query_tab()
+        if self.query_tabs.count() == 1:
+            editor = self.query_tabs.widget(0).findChild(QTextEdit)
+            if editor:
+                editor.clear()
+            return
+
+        self.query_tabs.removeTab(index)
+        self.query_tabs.update_add_button_position()
 
     def close_table_tab(self, index):
         """Закрытие вкладки таблицы"""
+        widget = self.table_tabs.widget(index)
+        table_name = self.table_tabs.tabText(index)
+
         self.table_tabs.removeTab(index)
+        widget.deleteLater()
+
+        # ✅ Удаляем из словаря
+        if table_name in self.open_table_tabs:
+            del self.open_table_tabs[table_name]
+
+        # 🔄 Обновляем индексы оставшихся вкладок
+        for name, i in list(self.open_table_tabs.items()):
+            if i > index:
+                self.open_table_tabs[name] = i - 1
+
         if self.table_tabs.count() == 0:
             self.table_tabs.setVisible(False)
 
@@ -831,11 +915,15 @@ class DatabaseViewer(QMainWindow):
 
         try:
             # Простой парсер SQL для демонстрации
-            result_df = self.execute_sql_query(query)
+            result_df, total_rows = self.execute_sql_query(query)
 
             if result_df is not None:
                 self.results_table.setDataFrame(result_df)
+                # Обновляем информацию о строках
+                displayed_rows = len(result_df)
+                self.rows_info_label.setText(f"Rows: {displayed_rows} of {total_rows}")
             else:
+                self.rows_info_label.setText("")
                 QMessageBox.information(self, "Info", "Query executed (no results)")
 
         except Exception as e:
@@ -860,7 +948,8 @@ class DatabaseViewer(QMainWindow):
                         break
 
                 if original_table:
-                    df = self.db_tables[original_table]
+                    df = self.db_tables[original_table].copy()
+                    total_rows = len(df)
 
                     # Простая фильтрация WHERE
                     where_match = re.search(r'WHERE\s+(.+?)(?:ORDER BY|GROUP BY|$)', query, re.IGNORECASE)
@@ -874,9 +963,10 @@ class DatabaseViewer(QMainWindow):
                             if col in df.columns:
                                 df = df[df[col].astype(str) == val]
 
-                    return df
+                    return df, total_rows
 
-        return None
+        return None, 0
+
 
     def load_script(self):
         """Загрузка SQL скрипта из файла"""
