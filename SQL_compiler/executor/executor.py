@@ -50,6 +50,7 @@ class QueryExecutor:
             return []
 
         current_rows = None
+        current_table = None
 
         for table_node in from_node.tables:
             if isinstance(table_node, TableBaseNode):
@@ -59,6 +60,7 @@ class QueryExecutor:
 
                 if current_rows is None:
                     current_rows = [row.copy() for row in table.rows]
+                    current_table = table
                 else:
                     new_rows = []
                     for existing_row in current_rows:
@@ -101,6 +103,16 @@ class QueryExecutor:
                             except Exception:
                                 continue
 
+                        if where_clause:
+                            temp_table = self._create_temp_table(merged)
+                            context = RowContext(temp_table, merged)
+                            evaluator = ExpressionEvaluator(context)
+                            try:
+                                if not bool(evaluator.evaluate(where_clause)):
+                                    continue
+                            except Exception:
+                                continue
+
                         matched = True
                         new_rows.append(merged)
 
@@ -108,11 +120,21 @@ class QueryExecutor:
                         merged = existing_row.copy()
                         for col in right_table.column_names:
                             merged[col] = None
-                        new_rows.append(merged)
+                        if where_clause:
+                            temp_table = self._create_temp_table(merged)
+                            context = RowContext(temp_table, merged)
+                            evaluator = ExpressionEvaluator(context)
+                            try:
+                                if bool(evaluator.evaluate(where_clause)):
+                                    new_rows.append(merged)
+                            except Exception:
+                                pass
+                        else:
+                            new_rows.append(merged)
 
                 current_rows = new_rows
 
-        if where_clause and current_rows:
+        if where_clause and current_rows and not self._was_where_applied_during_joins(from_node):
             filtered_rows = []
             for row in current_rows:
                 temp_table = self._create_temp_table(row)
@@ -126,6 +148,14 @@ class QueryExecutor:
             current_rows = filtered_rows
 
         return current_rows if current_rows else []
+
+    def _was_where_applied_during_joins(self, from_node: FromNode) -> bool:
+        if not from_node or not from_node.tables:
+            return False
+        for table_node in from_node.tables:
+            if isinstance(table_node, JoinNode):
+                return True
+        return False
 
     def _get_table_from_node(self, node: AstNode) -> Optional[Table]:
         if isinstance(node, TableBaseNode):
