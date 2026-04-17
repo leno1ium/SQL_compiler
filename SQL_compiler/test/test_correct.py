@@ -1,6 +1,31 @@
 from SQL_compiler.parser.parser import print_ast
 
 tests = [
+    """SELECT DISTINCT
+            u.id,
+            u.name AS username,
+            COUNT(o.id) AS orders_count
+        FROM users u
+            LEFT JOIN orders o
+                ON u.id = o.user_id
+        WHERE
+            NOT u.deleted = TRUE
+            AND (
+                u.age BETWEEN 18 AND 65
+                OR u.id IN (
+                    SELECT user_id
+                    FROM blacklist b
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM whitelist w
+                        WHERE w.user_id = b.user_id
+                    )
+                )
+            )
+        GROUP BY u.id, u.name
+        HAVING COUNT(DISTINCT o.id) > 5
+        ORDER BY orders_count DESC, u.name ASC
+        LIMIT 10 OFFSET 20""",
     """SELECT DISTINCT 
     u.id,
     u.name AS user_name,
@@ -62,6 +87,7 @@ HAVING COUNT(*) < 100
    AND AVG(p.price) > 50
 ORDER BY unique_buyers DESC
 LIMIT 20;""",
+
 ]
 
 for i, test in enumerate(tests, 1):

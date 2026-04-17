@@ -64,9 +64,15 @@ distinct: DISTINCT
 ident: IDENT -> simple_ident \
      | ident DOT IDENT -> compound_ident
 
-function_call: IDENT LPAREN (function_arg (COMMA function_arg)*)? RPAREN -> function_call
+function_call: IDENT LPAREN function_args? RPAREN -> function_call
 
-function_arg: expr | STAR
+?function_args: star_args
+              | distinct_args
+              | expr_args
+
+star_args: STAR
+distinct_args: DISTINCT expr_list
+expr_args: expr_list
 
 ?atom: num
      | string
@@ -109,6 +115,8 @@ function_arg: expr | STAR
 
 ?in_expr: is_expr
         | is_expr IN LPAREN expr_list RPAREN -> in_expr
+        | is_expr IN LPAREN select_stmt RPAREN -> in_subquery
+
 
 ?between_expr: in_expr
              | in_expr BETWEEN in_expr AND in_expr -> between
@@ -124,6 +132,7 @@ expr_list: expr (COMMA expr)*
 ?not_between_like_tail: BETWEEN in_expr AND in_expr -> not_between_tail
                        | LIKE compare_expr -> not_like_tail
                        | IN LPAREN expr_list RPAREN -> not_in_tail
+                       | IN LPAREN select_stmt RPAREN -> not_in_subquery
 
 select_stmt: SELECT distinct? select_list \
              (FROM table_refs)? \

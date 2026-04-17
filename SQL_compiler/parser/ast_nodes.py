@@ -4,6 +4,7 @@ from enum import Enum
 
 from lark import Token
 
+
 class AstNode(ABC):
     @property
     def childs(self) -> Tuple['AstNode', ...]:
@@ -262,6 +263,7 @@ class SubQueryNode(ExprNode):
     def __str__(self) -> str:
         return 'EXISTS'
 
+
 class ExistsNode(ExprNode):
     def __init__(self, subquery: 'SelectStmtNode', negated: bool = False):
         super().__init__()
@@ -274,6 +276,7 @@ class ExistsNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT EXISTS' if self.negated else 'EXISTS'
+
 
 class InSubqueryNode(ExprNode):
     def __init__(self, expr: ExprNode, subquery: 'SelectStmtNode', negated: bool = False):
@@ -288,6 +291,8 @@ class InSubqueryNode(ExprNode):
 
     def __str__(self) -> str:
         return 'NOT IN' if self.negated else 'IN'
+
+
 # select
 class SelectItemNode(AstNode):
     def __init__(self, expr: ExprNode, alias: Optional[str] = None):
@@ -349,6 +354,7 @@ class JoinNode(AstNode):
 
     def __str__(self) -> str:
         return self.join_type
+
 
 class OrderingTermNode(AstNode):
     def __init__(self, expr: ExprNode, direction: str = 'ASC'):
@@ -523,6 +529,7 @@ class OrderByNode(AstNode):
     def __str__(self) -> str:
         return "ORDER BY"
 
+
 class StmtListNode(StmtNode):
     def __init__(self, *stmts: StmtNode):
         super().__init__()
@@ -539,22 +546,39 @@ class StmtListNode(StmtNode):
 class FuncCallNode(ExprNode):
     """Вызов функции (COUNT, SUM, AVG, MIN, MAX)"""
 
-    def __init__(self, name: str, args: List[ExprNode]):
+    def __init__(self, name: str, args: List[ExprNode], distinct: bool = False):
         super().__init__()
-        self.name = name
+        self.name = name.upper()
         self.args = args if args is not None else []
+        self.distinct = distinct
 
     @property
-    def childs(self) -> Tuple[ExprNode, ...]:
-        return tuple(self.args)
+    def childs(self):
+        # ФИЛЬТРУЕМ ВСЁ, ЧТО НЕ AstNode
+        return tuple(arg for arg in self.args if isinstance(arg, AstNode))
 
-    def __str__(self) -> str:
+    def __str__(self):
+        distinct = "DISTINCT " if self.distinct else ""
+
         if len(self.args) == 1 and isinstance(self.args[0], StarNode):
-            return f"{self.name}(*)"
+            return f"{self.name}({distinct}*)"
         elif len(self.args) == 1:
-            return f"{self.name}({self.args[0]})"
+            return f"{self.name}({distinct}{self.args[0]})"
         elif len(self.args) == 0:
             return f"{self.name}()"
         else:
-            args_str = ", ".join(str(arg) for arg in self.args if arg is not None)
-            return f"{self.name}({args_str})"
+            args_str = ", ".join(str(arg) for arg in self.args)
+            return f"{self.name}({distinct}{args_str})"
+
+
+class DistinctArgsNode(AstNode):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+
+    @property
+    def childs(self):
+        return tuple(self.args)
+
+    def __str__(self):
+        return "DISTINCT"
