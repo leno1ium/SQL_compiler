@@ -1,19 +1,23 @@
 import sys
+from typing import Dict
+
+import numpy as np
 import pandas as pd
-from pathlib import Path
+from PySide6.QtCore import Qt, QSize, QRect
+from PySide6.QtGui import (
+    QFont, QColor, QSyntaxHighlighter, QTextCharFormat,
+    QAction, QIcon, QPainter, QPen
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget, QTextEdit,
     QTableWidget, QTableWidgetItem, QPushButton, QFileDialog,
-    QMenuBar, QMenu, QMessageBox, QToolBar, QComboBox,
-    QLabel, QFrame, QHeaderView, QAbstractItemView, QStyle,
-    QTabBar, QToolButton, QStyleOptionTab, QProxyStyle
+    QMessageBox, QToolBar, QLabel, QHeaderView, QAbstractItemView, QTabBar, QToolButton
 )
-from PySide6.QtCore import Qt, QSize, Signal, QTimer, QRect, QPoint
-from PySide6.QtGui import (
-    QFont, QColor, QPalette, QSyntaxHighlighter, QTextCharFormat,
-    QAction, QIcon, QPainter, QPen, QBrush
-)
+
+from SQL_compiler.executor.executor import QueryExecutor
+from SQL_compiler.executor.table import Table
+from SQL_compiler.parser.parser import parse
 
 
 class CustomTabBar(QTabBar):
@@ -95,7 +99,6 @@ class CustomTabWidget(QTabWidget):
     def __init__(self, parent=None, show_add_button=True):
         super().__init__(parent)
 
-        # 🔁 Кастомный TabBar (крестик + middle-click)
         self.setTabBar(CustomTabBar(self))
         self.setTabsClosable(True)
 
@@ -134,10 +137,6 @@ class CustomTabWidget(QTabWidget):
             }
         """)
 
-    # ------------------------------------------------------------------
-    # API ДЛЯ НЕДУБЛИРОВАНИЯ ВКЛАДОК
-    # ------------------------------------------------------------------
-
     def find_tab_by_text(self, text: str) -> int:
         """Вернуть индекс вкладки по имени или -1"""
         for i in range(self.count()):
@@ -168,17 +167,9 @@ class CustomTabWidget(QTabWidget):
         self.update_add_button_position()
         return index
 
-    # ------------------------------------------------------------------
-    # КНОПКА "+"
-    # ------------------------------------------------------------------
-
     def on_add_clicked(self):
         """Переопределяется снаружи"""
         pass
-
-    # ------------------------------------------------------------------
-    # ПОЗИЦИОНИРОВАНИЕ "+"
-    # ------------------------------------------------------------------
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -198,6 +189,8 @@ class CustomTabWidget(QTabWidget):
 
         y = (tab_bar.height() - self.add_button.height()) // 2
         self.add_button.move(x, y)
+
+
 class SQLSyntaxHighlighter(QSyntaxHighlighter):
     """Подсветка синтаксиса SQL"""
 
@@ -309,12 +302,10 @@ class ModernTreeWidget(QTreeWidget):
 
     def mousePressEvent(self, event):
         """Обработка нажатия мыши для расширения области клика по ветви"""
-        # Используем position() вместо устаревшего pos()
         pos = event.position().toPoint()
         item = self.itemAt(pos)
 
         if item and item.childCount() > 0:
-            # Проверяем, попали ли мы в область ветви (плюсика)
             index = self.indexFromItem(item)
             rect = self.visualRect(index)
 
@@ -347,7 +338,7 @@ class ModernTreeWidget(QTreeWidget):
 
 
 class ModernTableWidget(QTableWidget):
-    """Современная таблица для отображения результатов"""
+    """Таблица для отображения результатов"""
 
     def __init__(self):
         super().__init__()
@@ -413,7 +404,7 @@ class ModernTableWidget(QTableWidget):
 
 
 class ModernSQLTextEdit(QTextEdit):
-    """Современный редактор SQL с подсветкой синтаксиса"""
+    """Редактор SQL с подсветкой синтаксиса"""
 
     def __init__(self):
         super().__init__()
@@ -431,8 +422,6 @@ class ModernSQLTextEdit(QTextEdit):
         self.highlighter = SQLSyntaxHighlighter(self.document())
         self.setTabStopDistance(40)
 
-        # Добавляем отступы через setViewportMargins (слева и снизу по 3 пикселя)
-        self.setViewportMargins(3, 0, 0, 3)
 
 class DatabaseViewer(QMainWindow):
     """Главное окно приложения"""
@@ -445,6 +434,7 @@ class DatabaseViewer(QMainWindow):
         self.table_view_counter = 1
         self.open_table_tabs = {}  # table_name -> tab index
         self.left_panel_visible = True
+        self.sql_executor = None
         self.init_ui()
         self.apply_dark_theme()
 
@@ -464,7 +454,7 @@ class DatabaseViewer(QMainWindow):
         self.create_menu_bar()
 
         # Создание тулбара
-        self.create_toolbar()
+        # self.create_toolbar()
 
         # Основной сплиттер
         self.main_splitter = QSplitter(Qt.Horizontal)
@@ -548,8 +538,6 @@ class DatabaseViewer(QMainWindow):
         self.results_table = ModernTableWidget()
         results_layout.addWidget(self.results_table)
 
-
-
         # Создаем сплиттер для редактора и результатов
         vertical_splitter = QSplitter(Qt.Vertical)
         vertical_splitter.addWidget(editor_widget)
@@ -624,17 +612,6 @@ class DatabaseViewer(QMainWindow):
         toggle_panel_action.triggered.connect(self.toggle_left_panel)
         view_menu.addAction(toggle_panel_action)
 
-        # Меню Query
-        query_menu = menubar.addMenu("Query")
-
-        execute_action = QAction("Execute", self)
-        execute_action.triggered.connect(self.execute_query)
-        query_menu.addAction(execute_action)
-
-        new_query_action = QAction("New Query Tab", self)
-        new_query_action.triggered.connect(self.create_new_query_tab)
-        query_menu.addAction(new_query_action)
-
     def create_toolbar(self):
         """Создание тулбара"""
         toolbar = QToolBar()
@@ -668,15 +645,18 @@ class DatabaseViewer(QMainWindow):
 
         # Кнопка переключения левой панели
         toggle_panel_btn = QToolButton()
-        toggle_panel_btn.setText("☰")
+        toggle_panel_btn.setIcon(QIcon("icons/left_bar.svg"))
+        # toggle_panel_btn.setIconSize(QSize(14, 14))
+        toggle_panel_btn.setFixedSize(QSize(40, 40))
+
         toggle_panel_btn.setToolTip("Toggle Left Panel")
         toggle_panel_btn.clicked.connect(self.toggle_left_panel)
-        toggle_panel_btn.setStyleSheet("""
-            QToolButton {
-                font-size: 16px;
-                font-weight: bold;
-            }
-        """)
+        # toggle_panel_btn.setStyleSheet("""
+        #     QToolButton {
+        #         font-size: 16px;
+        #         font-weight: bold;
+        #     }
+        # """)
         toolbar.addWidget(toggle_panel_btn)
 
         # Добавляем действия
@@ -684,7 +664,6 @@ class DatabaseViewer(QMainWindow):
         load_db_btn.clicked.connect(self.load_database)
         load_db_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
         toolbar.addWidget(load_db_btn)
-
 
     def toggle_left_panel(self):
         """Переключение видимости левой панели"""
@@ -781,10 +760,142 @@ class DatabaseViewer(QMainWindow):
                 for sheet_name in self.current_db.sheet_names:
                     self.db_tables[sheet_name] = pd.read_excel(self.current_db, sheet_name)
 
+                # Создаем таблицы для QueryExecutor
+                executor_tables = self._convert_df_to_tables(self.db_tables)
+
+                # Инициализируем executor с таблицами
+                self.query_executor = QueryExecutor(executor_tables)
+
                 self.update_db_tree()
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load database: {str(e)}")
+
+    def _convert_df_to_tables(self, db_tables: Dict[str, pd.DataFrame]) -> Dict[str, Table]:
+        """Конвертация DataFrame в объекты Table для QueryExecutor"""
+        executor_tables = {}
+
+        for table_name, df in db_tables.items():
+            table = Table(table_name)
+
+            # Добавляем колонки
+            for col in df.columns:
+                # Определяем тип колонки
+                dtype = df[col].dtype
+                if dtype == 'int64':
+                    col_type = int
+                elif dtype == 'float64':
+                    col_type = float
+                elif dtype == 'bool':
+                    col_type = bool
+                else:
+                    col_type = str
+
+                table.add_column(col, col_type)
+
+            # Добавляем строки
+            for _, row in df.iterrows():
+                row_dict = row.to_dict()
+                # Конвертируем значения в соответствующие типы
+                for col, value in row_dict.items():
+                    if pd.isna(value):
+                        row_dict[col] = None
+                    elif isinstance(value, (np.integer,)):
+                        row_dict[col] = int(value)
+                    elif isinstance(value, (np.floating,)):
+                        row_dict[col] = float(value)
+                    elif isinstance(value, (np.bool_,)):
+                        row_dict[col] = bool(value)
+                    else:
+                        row_dict[col] = str(value) if value is not None else None
+
+                table.add_row(row_dict)
+
+            executor_tables[table_name] = table
+
+        return executor_tables
+
+    def execute_query(self):
+        """Выполнение SQL запроса"""
+        current_tab = self.query_tabs.currentWidget()
+        if not current_tab:
+            return
+
+        query_editor = current_tab.findChild(QTextEdit)
+        if not query_editor:
+            return
+
+        query = query_editor.toPlainText().strip()
+
+        if not query:
+            QMessageBox.warning(self, "Warning", "Query is empty")
+            return
+
+        if not self.db_tables:
+            QMessageBox.warning(self, "Warning", "No database loaded")
+            return
+
+        if not self.query_executor:
+            QMessageBox.warning(self, "Warning", "Query executor not initialized")
+            return
+
+        try:
+            # Приводим идентификаторы к нижнему регистру
+            normalized_query = self._normalize_query(query)
+
+            # Парсим нормализованный SQL запрос
+            ast = parse(normalized_query)
+
+            # Выполняем запрос через QueryExecutor
+            result_rows = self.query_executor.execute(ast)
+
+            if result_rows:
+                # Конвертируем результат в DataFrame для отображения
+                result_df = pd.DataFrame(result_rows)
+                self.results_table.setDataFrame(result_df)
+
+                # Обновляем информацию о строках
+                displayed_rows = len(result_df)
+                self.rows_info_label.setText(f"Rows: {displayed_rows}")
+            else:
+                self.results_table.setRowCount(0)
+                self.results_table.setColumnCount(0)
+                self.rows_info_label.setText("Rows: 0")
+                QMessageBox.information(self, "Info", "Query executed successfully (no results)")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
+
+    def _normalize_query(self, query: str) -> str:
+        """Приведение всех идентификаторов в SQL запросе к нижнему регистру"""
+
+        # Приводим к нижнему регистру все идентификаторы, кроме строк в кавычках
+        result = []
+        in_string = False
+        string_char = None
+        i = 0
+
+        while i < len(query):
+            char = query[i]
+
+            # Обработка строк в кавычках
+            if char in ("'", '"') and not in_string:
+                in_string = True
+                string_char = char
+                result.append(char)
+            elif char == string_char and in_string:
+                in_string = False
+                string_char = None
+                result.append(char)
+            elif in_string:
+                result.append(char)
+            else:
+                # Приводим к нижнему регистру только идентификаторы и ключевые слова
+                result.append(char.lower())
+
+            i += 1
+
+        return ''.join(result)
 
     def update_db_tree(self):
         """Обновление дерева базы данных"""
@@ -821,13 +932,13 @@ class DatabaseViewer(QMainWindow):
 
         self.table_tabs.setVisible(True)
 
-        # ✅ Если вкладка уже существует — просто активируем
+        # Если вкладка уже существует — просто активируем
         if table_name in self.open_table_tabs:
             index = self.open_table_tabs[table_name]
             self.table_tabs.setCurrentIndex(index)
             return
 
-        # ❗ Создаём новую вкладку
+        # Создаём новую вкладку
         tab_widget = QWidget()
         tab_layout = QVBoxLayout(tab_widget)
         tab_layout.setContentsMargins(0, 0, 0, 0)
@@ -881,92 +992,17 @@ class DatabaseViewer(QMainWindow):
         self.table_tabs.removeTab(index)
         widget.deleteLater()
 
-        # ✅ Удаляем из словаря
+        #Удаляем из словаря
         if table_name in self.open_table_tabs:
             del self.open_table_tabs[table_name]
 
-        # 🔄 Обновляем индексы оставшихся вкладок
+        #Обновляем индексы оставшихся вкладок
         for name, i in list(self.open_table_tabs.items()):
             if i > index:
                 self.open_table_tabs[name] = i - 1
 
         if self.table_tabs.count() == 0:
             self.table_tabs.setVisible(False)
-
-    def execute_query(self):
-        """Выполнение SQL запроса"""
-        current_tab = self.query_tabs.currentWidget()
-        if not current_tab:
-            return
-
-        query_editor = current_tab.findChild(QTextEdit)
-        if not query_editor:
-            return
-
-        query = query_editor.toPlainText().strip()
-
-        if not query:
-            QMessageBox.warning(self, "Warning", "Query is empty")
-            return
-
-        if not self.db_tables:
-            QMessageBox.warning(self, "Warning", "No database loaded")
-            return
-
-        try:
-            # Простой парсер SQL для демонстрации
-            result_df, total_rows = self.execute_sql_query(query)
-
-            if result_df is not None:
-                self.results_table.setDataFrame(result_df)
-                # Обновляем информацию о строках
-                displayed_rows = len(result_df)
-                self.rows_info_label.setText(f"Rows: {displayed_rows} of {total_rows}")
-            else:
-                self.rows_info_label.setText("")
-                QMessageBox.information(self, "Info", "Query executed (no results)")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
-
-    def execute_sql_query(self, query):
-        """Выполнение SQL запроса (упрощенная версия)"""
-        import re
-
-        query_upper = query.upper()
-
-        if query_upper.startswith("SELECT"):
-            # Простой парсер SELECT запросов
-            from_match = re.search(r'FROM\s+(\w+)', query_upper)
-            if from_match:
-                table_name = from_match.group(1)
-                # Находим оригинальное имя таблицы (с учетом регистра)
-                original_table = None
-                for name in self.db_tables.keys():
-                    if name.upper() == table_name:
-                        original_table = name
-                        break
-
-                if original_table:
-                    df = self.db_tables[original_table].copy()
-                    total_rows = len(df)
-
-                    # Простая фильтрация WHERE
-                    where_match = re.search(r'WHERE\s+(.+?)(?:ORDER BY|GROUP BY|$)', query, re.IGNORECASE)
-                    if where_match:
-                        condition = where_match.group(1).strip()
-                        # Очень упрощенная обработка WHERE
-                        if '=' in condition:
-                            col, val = condition.split('=')
-                            col = col.strip()
-                            val = val.strip().strip("'\"")
-                            if col in df.columns:
-                                df = df[df[col].astype(str) == val]
-
-                    return df, total_rows
-
-        return None, 0
-
 
     def load_script(self):
         """Загрузка SQL скрипта из файла"""
