@@ -420,21 +420,22 @@ class SQLASTBuilder(Transformer):
         return TableSubqueryNode(query, alias)
 
     def table_ref(self, args):
-        # table_primary (join_clause)*
         # args: [table_primary, join_clause1, join_clause2, ...]
-        result = [args[0]]
+        base = args[0]
+
+        joins = []
         for arg in args[1:]:
-            if arg is not None:
-                result.append(arg)
-        return result
+            if isinstance(arg, JoinNode):
+                joins.append(arg)
+
+        # динамически добавляем joins к таблице
+        base.joins = joins
+        return base
 
     def table_refs(self, args):
-        # table_ref (COMMA table_ref)*
         tables = []
         for arg in args:
-            if isinstance(arg, list):
-                tables.extend(arg)
-            elif arg is not None and arg != ',':
+            if isinstance(arg, AstNode):
                 tables.append(arg)
         return FromNode(tables)
 

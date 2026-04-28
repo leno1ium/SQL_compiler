@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTabWidget, QTextEdit,
     QTableWidget, QTableWidgetItem, QPushButton, QFileDialog,
-    QMessageBox, QToolBar, QLabel, QHeaderView, QAbstractItemView, QTabBar, QToolButton
+    QMessageBox, QToolBar, QLabel, QHeaderView, QAbstractItemView, QTabBar, QToolButton, QSizePolicy
 )
 
 from SQL_compiler.executor.executor import QueryExecutor
@@ -29,10 +29,14 @@ class CustomTabBar(QTabBar):
             QTabBar::tab {
                 background-color: #1E1E1E;
                 color: #808080;
-                padding: 8px 20px 8px 15px;
+                padding: 5px 20px 5px 15px;
                 margin-right: 0px;
                 border: none;
-                min-width: 100px;
+                min-width: 80px;
+                border-top-left-radius: 3px;
+                border-top-right-radius: 3px;
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
             }
             QTabBar::tab:selected {
                 background-color: #2D2D2D;
@@ -48,7 +52,8 @@ class CustomTabBar(QTabBar):
                 image: none;
                 subcontrol-position: right;
                 subcontrol-origin: padding;
-                margin-right: 1px;
+                margin-right: 10px;
+                right: -3px;
             }
         """)
 
@@ -123,7 +128,6 @@ class CustomTabWidget(QTabWidget):
                     border-radius: 4px;
                 }
                 QToolButton:hover {
-                    background-color: #3E3E3E;
                     color: #CCCCCC;
                 }
             """)
@@ -131,11 +135,32 @@ class CustomTabWidget(QTabWidget):
             self.add_button.clicked.connect(self.on_add_clicked)
 
         self.setStyleSheet("""
-            QTabWidget::pane {
-                border: none;
-                background-color: #1E1E1E;
-            }
-        """)
+                    QTabBar::tab {
+                        background-color: #1E1E1E;
+                        color: #808080;
+                        padding: 4px 8px 4px ; 
+                        margin-right: 0px;
+                        border: none;
+                        min-width: 80px; 
+                    }
+                    QTabBar::tab:selected {
+                        background-color: #2D2D2D;
+                        color: #E0E0E0;
+                    }
+                    QTabBar::tab:hover {
+                        background-color: #2A2A2A;
+                    }
+                    QTabBar::tab:!selected {
+                        background-color: #1E1E1E;
+                    }
+                    QTabBar::close-button {
+                        image: none;
+                        subcontrol-position: right;
+                        subcontrol-origin: padding;
+                        margin-right: 10px;
+                        right: -3px;
+                    }
+                """)
 
     def find_tab_by_text(self, text: str) -> int:
         """Вернуть индекс вкладки по имени или -1"""
@@ -271,34 +296,43 @@ class ModernTreeWidget(QTreeWidget):
         super().__init__()
         self.setHeaderHidden(True)
         self.setFocusPolicy(Qt.NoFocus)
+        self.setIndentation(10)  # Уменьшаем отступы для веток
         self.setStyleSheet("""
-            QTreeWidget {
-                background-color: #1E1E1E;
-                color: #CCCCCC;
-                border: none;
-                border-radius: 8px;
-                padding: 5px;
-            }
-            QTreeWidget::item {
-                padding: 6px;
-                border-radius: 4px;
-                color: #CCCCCC;
-                background-color: transparent;
-            }
-            QTreeWidget::item:hover {
-                background-color: transparent;
-            }
-            QTreeWidget::item:selected {
-                background-color: transparent;
-                color: #CCCCCC;
-            }
-            QTreeWidget::branch {
-                background-color: transparent;
-            }
-            QTreeWidget::branch:selected {
-                background-color: transparent;
-            }
-        """)
+                    QTreeWidget {
+                        background-color: #1E1E1E;
+                        color: #CCCCCC;
+                        border: none;
+                        border-radius: 8px;
+                        padding: 5px;
+                        font-size: 16px;
+                    }
+                    QTreeWidget::item {
+                        padding: 6px;
+                        border-radius: 4px;
+                        color: #CCCCCC;
+                        background-color: transparent;
+                    }
+                    QTreeWidget::item:hover {
+                        background-color: transparent;
+                    }
+                    QTreeWidget::item:selected {
+                        background-color: transparent;
+                        color: #CCCCCC;
+                    }
+                    QTreeWidget::branch {
+                        background: transparent;
+                    }
+                    QTreeWidget::branch:closed:has-children {
+                        image: url(icons/tick_right.svg);
+                        width: 5px;
+                        height: 5px;
+                    }
+                    QTreeWidget::branch:open:has-children {
+                        image: url(icons/tick_down.svg);
+                        width: 5px;
+                        height: 5px;
+                    }
+                """)
 
     def mousePressEvent(self, event):
         """Обработка нажатия мыши для расширения области клика по ветви"""
@@ -306,11 +340,13 @@ class ModernTreeWidget(QTreeWidget):
         item = self.itemAt(pos)
 
         if item and item.childCount() > 0:
+            # Получаем прямоугольник элемента
             index = self.indexFromItem(item)
             rect = self.visualRect(index)
 
-            # Расширяем область клика для ветви
-            branch_rect = QRect(rect.x(), rect.y(), 30, rect.height())
+            # Область для ветки (первые 20 пикселей, учитывая отступ)
+            branch_rect = QRect(rect.x() + 5, rect.y(), 20, rect.height())
+
             if branch_rect.contains(pos):
                 # Переключаем состояние развернуто/свернуто
                 item.setExpanded(not item.isExpanded())
@@ -318,30 +354,31 @@ class ModernTreeWidget(QTreeWidget):
 
         super().mousePressEvent(event)
 
-    def drawBranches(self, painter, rect, index):
-        """Кастомная отрисовка ветвей дерева"""
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        if self.model().hasChildren(index):
-            painter.setPen(QPen(QColor("#808080"), 1))
-
-            center_x = rect.x() + 15  # Фиксированная позиция для плюсика
-            center_y = rect.y() + rect.height() // 2
-
-            if self.isExpanded(index):
-                # Рисуем минус
-                painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
-            else:
-                # Рисуем плюс
-                painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
-                painter.drawLine(center_x, center_y - 4, center_x, center_y + 4)
+    # def drawBranches(self, painter, rect, index):
+    #     """Кастомная отрисовка ветвей дерева"""
+    #     painter.setRenderHint(QPainter.Antialiasing)
+    #
+    #     if self.model().hasChildren(index):
+    #         painter.setPen(QPen(QColor("#808080"), 1))
+    #
+    #         center_x = rect.x() + 15  # Фиксированная позиция для плюсика
+    #         center_y = rect.y() + rect.height() // 2
+    #
+    #         if self.isExpanded(index):
+    #             # Рисуем минус
+    #             painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
+    #         else:
+    #             # Рисуем плюс
+    #             painter.drawLine(center_x - 4, center_y, center_x + 4, center_y)
+    #             painter.drawLine(center_x, center_y - 4, center_x, center_y + 4)
 
 
 class ModernTableWidget(QTableWidget):
     """Таблица для отображения результатов"""
 
-    def __init__(self):
+    def __init__(self, stretch_columns=False):
         super().__init__()
+        self.stretch_columns = stretch_columns
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setAlternatingRowColors(False)
         self.verticalHeader().setVisible(True)
@@ -386,7 +423,7 @@ class ModernTableWidget(QTableWidget):
             }
         """)
 
-    def setDataFrame(self, df):
+    def setDataFrame(self, df, stretch=True):
         """Заполнение таблицы из DataFrame"""
         self.setRowCount(len(df))
         self.setColumnCount(len(df.columns))
@@ -402,6 +439,13 @@ class ModernTableWidget(QTableWidget):
                 item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self.setItem(i, j, item)
 
+        # Применяем растягивание колонок
+        if stretch:
+            header = self.horizontalHeader()
+            for j in range(len(df.columns)):
+                header.setSectionResizeMode(j, QHeaderView.Stretch)
+        else:
+            self.resizeColumnsToContents()
 
 class ModernSQLTextEdit(QTextEdit):
     """Редактор SQL с подсветкой синтаксиса"""
@@ -484,26 +528,37 @@ class DatabaseViewer(QMainWindow):
         editor_layout.setSpacing(5)
 
         # Кнопки управления запросами
-        query_buttons_layout = QHBoxLayout()
-        query_buttons_layout.setSpacing(8)
+        buttons_container = QWidget()
+        buttons_container.setSizePolicy(
+            QSizePolicy.Maximum,
+            QSizePolicy.Fixed
+        )
+        buttons_container.setStyleSheet("""
+            QWidget {
+                background-color: #252526;
+                border-radius: 8px;
+                padding: 6px;
+            }
+        """)
 
-        self.execute_btn = QPushButton("Execute")
+        query_buttons_layout = QHBoxLayout(buttons_container)
+        query_buttons_layout.setSpacing(6)
+        query_buttons_layout.setContentsMargins(6, 4, 6, 4)
+
+        self.execute_btn = self.make_icon_button("icons/execute.svg", "Execute")
         self.execute_btn.clicked.connect(self.execute_query)
-        self.execute_btn.setStyleSheet(self.get_button_style("#0E639C", "#1177BB"))
 
-        self.save_query_btn = QPushButton("Save Query")
+        self.save_query_btn = self.make_icon_button("icons/save.svg", "Save Query")
         self.save_query_btn.clicked.connect(self.save_query_to_file)
-        self.save_query_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
 
-        self.load_script_btn = QPushButton("Load Script")
+        self.load_script_btn = self.make_icon_button("icons/load.svg", "Load Script")
         self.load_script_btn.clicked.connect(self.load_script)
-        self.load_script_btn.setStyleSheet(self.get_button_style("#3E3E3E", "#4E4E4E"))
 
         query_buttons_layout.addWidget(self.execute_btn)
         query_buttons_layout.addWidget(self.save_query_btn)
         query_buttons_layout.addWidget(self.load_script_btn)
         query_buttons_layout.addStretch()
-
+        editor_layout.addWidget(buttons_container)
         editor_layout.addLayout(query_buttons_layout)
 
         # Вкладки для запросов
@@ -557,6 +612,26 @@ class DatabaseViewer(QMainWindow):
 
         main_layout.addWidget(self.main_splitter)
 
+    def make_icon_button(self, icon_path, tooltip):
+        btn = QPushButton()
+        btn.setIcon(QIcon(icon_path))
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(32, 32)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                background: transparent;
+            }
+            QPushButton:pressed {
+                background: transparent;
+            }
+        """)
+        return btn
+
     def create_menu_bar(self):
         """Создание меню"""
         menubar = self.menuBar()
@@ -566,6 +641,9 @@ class DatabaseViewer(QMainWindow):
                 color: #CCCCCC;
                 border-bottom: 1px solid #3E3E3E;
                 padding: 4px;
+            }
+            QMenuBar::item {
+                padding: 4px 8px;
             }
             QMenuBar::item:selected {
                 background-color: #3E3E3E;
@@ -578,9 +656,19 @@ class DatabaseViewer(QMainWindow):
                 border-radius: 6px;
                 padding: 4px;
             }
-            QMenu::item:selected {
-                background-color: #094771;
+            QMenu::item {
+                padding: 6px 8px 6px 8px;  
+                margin: 2px 4px;
                 border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #404040;  
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #3E3E3E;
+                margin: 4px 8px;
             }
         """)
 
@@ -852,7 +940,7 @@ class DatabaseViewer(QMainWindow):
             if result_rows:
                 # Конвертируем результат в DataFrame для отображения
                 result_df = pd.DataFrame(result_rows)
-                self.results_table.setDataFrame(result_df)
+                self.results_table.setDataFrame(result_df, stretch=True)  # Добавлен stretch=True
 
                 # Обновляем информацию о строках
                 displayed_rows = len(result_df)
@@ -946,8 +1034,7 @@ class DatabaseViewer(QMainWindow):
         table = ModernTableWidget()
         df = self.db_tables[table_name]
 
-        table.setDataFrame(df)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setDataFrame(df, stretch=True)  # Явно указываем stretch=True
 
         tab_layout.addWidget(table)
 
@@ -992,11 +1079,11 @@ class DatabaseViewer(QMainWindow):
         self.table_tabs.removeTab(index)
         widget.deleteLater()
 
-        #Удаляем из словаря
+        # Удаляем из словаря
         if table_name in self.open_table_tabs:
             del self.open_table_tabs[table_name]
 
-        #Обновляем индексы оставшихся вкладок
+        # Обновляем индексы оставшихся вкладок
         for name, i in list(self.open_table_tabs.items()):
             if i > index:
                 self.open_table_tabs[name] = i - 1
