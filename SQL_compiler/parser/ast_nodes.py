@@ -7,7 +7,7 @@ from lark import Token
 
 class AstNode(ABC):
     @property
-    def childs(self) -> Tuple['AstNode', ...]:
+    def childs(self) -> Tuple["AstNode", ...]:
         return ()
 
     @abstractmethod
@@ -19,16 +19,16 @@ class AstNode(ABC):
         res = [str(self)]
         childs = self.childs
         for i, child in enumerate(childs):
-            ch0, ch = '├', '│'
+            ch0, ch = "├", "│"
             if i == len(childs) - 1:
-                ch0, ch = '└', ' '
+                ch0, ch = "└", " "
             child_tree = child.tree
             for j, line in enumerate(child_tree):
                 prefix = ch0 if j == 0 else ch
-                res.append(prefix + ' ' + line)
+                res.append(prefix + " " + line)
         return res
 
-    def visit(self, func: Callable[['AstNode'], None]) -> None:
+    def visit(self, func: Callable[["AstNode"], None]) -> None:
         func(self)
         for child in self.childs:
             child.visit(func)
@@ -37,19 +37,18 @@ class AstNode(ABC):
         return self.childs[index] if index < len(self.childs) else None
 
 
-class ExprNode(AstNode):  # expression
+class ExprNode(AstNode):
     pass
 
 
-class ValueNode(ExprNode):  # literals
+class ValueNode(ExprNode):
     pass
 
 
-class StmtNode(AstNode):  # operators
+class StmtNode(AstNode):
     pass
 
 
-# base values
 class NumNode(ValueNode):
     def __init__(self, num: float):
         super().__init__()
@@ -74,15 +73,14 @@ class BoolNode(ValueNode):
         self.value = value
 
     def __str__(self) -> str:
-        return 'TRUE' if self.value else 'FALSE'
+        return "TRUE" if self.value else "FALSE"
 
 
 class NullNode(ValueNode):
     def __str__(self) -> str:
-        return 'NULL'
+        return "NULL"
 
 
-# identifiers
 class IdentNode(ExprNode):
     def __init__(self, name: str):
         super().__init__()
@@ -99,10 +97,10 @@ class CompoundIdentNode(ExprNode):
 
     @property
     def full_name(self) -> str:
-        return '.'.join(self.parts)
+        return ".".join(self.parts)
 
     @property
-    def childs(self) -> Tuple['AstNode', ...]:
+    def childs(self) -> Tuple["AstNode", ...]:
         return tuple(IdentNode(part) for part in self.parts)
 
     def __str__(self) -> str:
@@ -111,7 +109,7 @@ class CompoundIdentNode(ExprNode):
 
 class StarNode(ExprNode):
     def __str__(self) -> str:
-        return '*'
+        return "*"
 
 
 class FromNode(AstNode):
@@ -140,11 +138,10 @@ class OnNode(AstNode):
         return "ON"
 
 
-# operators
 class UnOp(Enum):
-    NOT = 'NOT'
-    PLUS = '+'
-    MINUS = '-'
+    NOT = "NOT"
+    PLUS = "+"
+    MINUS = "-"
 
 
 class UnOpNode(ExprNode):
@@ -162,29 +159,29 @@ class UnOpNode(ExprNode):
 
 
 class BinOp(Enum):
-    ADD = '+'
-    SUB = '-'
-    MUL = '*'
-    DIV = '/'
-    REM = '%'
+    ADD = "+"
+    SUB = "-"
+    MUL = "*"
+    DIV = "/"
+    REM = "%"
 
-    GT = '>'
-    GE = '>='
-    LT = '<'
-    LE = '<='
-    EQ = '=='
-    NE = '!='
-    NE2 = '<>'
+    GT = ">"
+    GE = ">="
+    LT = "<"
+    LE = "<="
+    EQ = "=="
+    NE = "!="
+    NE2 = "<>"
 
-    OR = 'OR'
-    AND = 'AND'
+    OR = "OR"
+    AND = "AND"
 
-    LIKE = 'LIKE'
-    NOT_LIKE = 'NOT LIKE'
-    IN = 'IN'
-    NOT_IN = 'NOT IN'
-    IS = 'IS'
-    IS_NOT = 'IS NOT'
+    LIKE = "LIKE"
+    NOT_LIKE = "NOT LIKE"
+    IN = "IN"
+    NOT_IN = "NOT IN"
+    IS = "IS"
+    IS_NOT = "IS NOT"
 
 
 class BinOpNode(ExprNode):
@@ -199,9 +196,6 @@ class BinOpNode(ExprNode):
         return self.arg1, self.arg2
 
     def __str__(self) -> str:
-        # Для логических операторов используем их названия
-        if self.op in (BinOp.AND, BinOp.OR):
-            return str(self.op.value)
         return str(self.op.value)
 
 
@@ -218,7 +212,7 @@ class BetweenNode(ExprNode):
         return self.expr, self.low, self.high
 
     def __str__(self) -> str:
-        return 'NOT BETWEEN' if self.negated else 'BETWEEN'
+        return "NOT BETWEEN" if self.negated else "BETWEEN"
 
 
 class InNode(ExprNode):
@@ -233,7 +227,7 @@ class InNode(ExprNode):
         return (self.expr,) + tuple(self.elements)
 
     def __str__(self) -> str:
-        return 'NOT IN' if self.negated else 'IN'
+        return "NOT IN" if self.negated else "IN"
 
 
 class IsNullNode(ExprNode):
@@ -247,53 +241,51 @@ class IsNullNode(ExprNode):
         return self.expr,
 
     def __str__(self) -> str:
-        return 'IS NOT NULL' if self.negated else 'IS NULL'
+        return "IS NOT NULL" if self.negated else "IS NULL"
 
 
-# subqueries
 class SubQueryNode(ExprNode):
-    def __init__(self, query: 'SelectStmtNode'):
+    def __init__(self, query: "SelectStmtNode"):
         super().__init__()
         self.query = query
 
     @property
-    def childs(self) -> Tuple['SelectStmtNode', ...]:
+    def childs(self) -> Tuple["SelectStmtNode", ...]:
         return self.query,
 
     def __str__(self) -> str:
-        return 'EXISTS'
+        return "EXISTS"
 
 
 class ExistsNode(ExprNode):
-    def __init__(self, subquery: 'SelectStmtNode', negated: bool = False):
+    def __init__(self, subquery: "SelectStmtNode", negated: bool = False):
         super().__init__()
         self.subquery = subquery
         self.negated = negated
 
     @property
-    def childs(self) -> Tuple['SelectStmtNode']:
+    def childs(self) -> Tuple["SelectStmtNode"]:
         return self.subquery,
 
     def __str__(self) -> str:
-        return 'NOT EXISTS' if self.negated else 'EXISTS'
+        return "NOT EXISTS" if self.negated else "EXISTS"
 
 
 class InSubqueryNode(ExprNode):
-    def __init__(self, expr: ExprNode, subquery: 'SelectStmtNode', negated: bool = False):
+    def __init__(self, expr: ExprNode, subquery: "SelectStmtNode", negated: bool = False):
         super().__init__()
         self.expr = expr
         self.subquery = subquery
         self.negated = negated
 
     @property
-    def childs(self) -> Tuple[ExprNode, 'SelectStmtNode']:
+    def childs(self) -> Tuple[ExprNode, "SelectStmtNode"]:
         return self.expr, self.subquery
 
     def __str__(self) -> str:
-        return 'NOT IN' if self.negated else 'IN'
+        return "NOT IN" if self.negated else "IN"
 
 
-# select
 class SelectItemNode(AstNode):
     def __init__(self, expr: ExprNode, alias: Optional[str] = None):
         super().__init__()
@@ -323,13 +315,13 @@ class TableBaseNode(AstNode):
 
 
 class TableSubqueryNode(AstNode):
-    def __init__(self, query: 'SelectStmtNode', alias: Optional[str] = None):
+    def __init__(self, query: "SelectStmtNode", alias: Optional[str] = None):
         super().__init__()
         self.query = query
         self.alias = alias
 
     @property
-    def childs(self) -> Tuple['SelectStmtNode']:
+    def childs(self) -> Tuple["SelectStmtNode"]:
         return self.query,
 
     def __str__(self) -> str:
@@ -341,7 +333,7 @@ class TableSubqueryNode(AstNode):
 class JoinNode(AstNode):
     def __init__(self, join_type: str, table: AstNode, condition: Optional[ExprNode] = None):
         super().__init__()
-        self.join_type = join_type.strip()  # Убираем лишние пробелы
+        self.join_type = join_type.strip()
         self.table = table
         self.condition = condition
 
@@ -357,10 +349,10 @@ class JoinNode(AstNode):
 
 
 class OrderingTermNode(AstNode):
-    def __init__(self, expr: ExprNode, direction: str = 'ASC'):
+    def __init__(self, expr: ExprNode, direction: str = "ASC"):
         super().__init__()
         self.expr = expr
-        self.direction = direction  # 'ASC' или 'DESC'
+        self.direction = direction
 
     @property
     def childs(self) -> Tuple[ExprNode]:
@@ -390,15 +382,17 @@ class LimitOffsetNode(AstNode):
 
 
 class SelectStmtNode(StmtNode):
-    def __init__(self,
-                 distinct: bool,
-                 select_list: List[SelectItemNode],
-                 from_node: Optional[FromNode] = None,
-                 where_clause: Optional[AstNode] = None,
-                 group_by: Optional[List[ExprNode]] = None,
-                 having_clause: Optional[ExprNode] = None,
-                 order_by: Optional[List[OrderingTermNode]] = None,
-                 limit_offset: Optional[LimitOffsetNode] = None):
+    def __init__(
+        self,
+        distinct: bool,
+        select_list: List[SelectItemNode],
+        from_node: Optional[FromNode] = None,
+        where_clause: Optional[AstNode] = None,
+        group_by: Optional[List[ExprNode]] = None,
+        having_clause: Optional[ExprNode] = None,
+        order_by: Optional[List[OrderingTermNode]] = None,
+        limit_offset: Optional[LimitOffsetNode] = None,
+    ):
         super().__init__()
         self.distinct = distinct
         self.select_list = select_list
@@ -413,51 +407,40 @@ class SelectStmtNode(StmtNode):
     def childs(self) -> Tuple[AstNode, ...]:
         children = []
 
-        # Добавляем SELECT список с заголовком
         if self.select_list:
-            # Создаем специальный узел для SELECT списка
             children.append(SelectListNode(self.select_list))
 
-        # Добавляем FROM
         if self.from_node:
             children.append(self.from_node)
 
-        # Добавляем WHERE
         if self.where_clause is not None:
-            # Проверяем, не обернут ли уже в WhereNode
             if not isinstance(self.where_clause, WhereNode):
                 children.append(WhereNode(self.where_clause))
             else:
                 children.append(self.where_clause)
 
-        # Добавляем GROUP BY
         if self.group_by:
             children.append(GroupByNode(self.group_by))
 
-        # Добавляем HAVING
         if self.having_clause:
             children.append(HavingNode(self.having_clause))
 
-        # Добавляем ORDER BY
         if self.order_by:
             children.append(OrderByNode(self.order_by))
 
-        # Добавляем LIMIT/OFFSET
         if self.limit_offset:
             children.append(self.limit_offset)
 
         return tuple(children)
 
     def __str__(self) -> str:
-        base = 'SELECT'
+        base = "SELECT"
         if self.distinct:
-            base += ' DISTINCT'
+            base += " DISTINCT"
         return base
 
 
 class SelectListNode(AstNode):
-    """Вспомогательный узел для отображения SELECT списка"""
-
     def __init__(self, select_list: List[SelectItemNode]):
         super().__init__()
         self.select_list = select_list
@@ -471,8 +454,6 @@ class SelectListNode(AstNode):
 
 
 class WhereNode(AstNode):
-    """Узел для WHERE clause"""
-
     def __init__(self, condition: AstNode):
         super().__init__()
         self.condition = condition
@@ -486,8 +467,6 @@ class WhereNode(AstNode):
 
 
 class GroupByNode(AstNode):
-    """Узел для GROUP BY clause"""
-
     def __init__(self, expressions: List[ExprNode]):
         super().__init__()
         self.expressions = expressions
@@ -501,8 +480,6 @@ class GroupByNode(AstNode):
 
 
 class HavingNode(AstNode):
-    """Узел для HAVING clause"""
-
     def __init__(self, condition: AstNode):
         super().__init__()
         self.condition = condition
@@ -516,8 +493,6 @@ class HavingNode(AstNode):
 
 
 class OrderByNode(AstNode):
-    """Узел для ORDER BY clause"""
-
     def __init__(self, terms: List[OrderingTermNode]):
         super().__init__()
         self.terms = terms
@@ -540,12 +515,10 @@ class StmtListNode(StmtNode):
         return self.stmts
 
     def __str__(self) -> str:
-        return '...'
+        return "..."
 
 
 class FuncCallNode(ExprNode):
-    """Вызов функции (COUNT, SUM, AVG, MIN, MAX)"""
-
     def __init__(self, name: str, args: List[ExprNode], distinct: bool = False):
         super().__init__()
         self.name = name.upper()
@@ -554,7 +527,6 @@ class FuncCallNode(ExprNode):
 
     @property
     def childs(self):
-        # ФИЛЬТРУЕМ ВСЁ, ЧТО НЕ AstNode
         return tuple(arg for arg in self.args if isinstance(arg, AstNode))
 
     def __str__(self):

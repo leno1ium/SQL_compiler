@@ -1,12 +1,11 @@
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Union
 from datetime import datetime
 from pathlib import Path
+
 import openpyxl
-from openpyxl.utils import get_column_letter
 
 
 class Table:
-
     INTEGER = int
     FLOAT = float
     STRING = str
@@ -64,7 +63,7 @@ class Table:
                 int: "INTEGER",
                 float: "FLOAT",
                 str: "STRING",
-                datetime: "DATE"
+                datetime: "DATE",
             }.get(col_type, str(col_type))
 
             examples = []
@@ -87,10 +86,9 @@ class Table:
         print(header)
         print("-" * 80)
 
-        for i, row in enumerate(self.rows):
+        for row in self.rows:
             row_str = " | ".join(
-                f"{str(row.get(col, 'NULL')):<15}"
-                for col in self.column_names
+                f"{str(row.get(col, 'NULL')):<15}" for col in self.column_names
             )
             print(row_str)
 
@@ -98,7 +96,6 @@ class Table:
 
 
 class ExcelLoader:
-
     def __init__(self):
         self.tables: Dict[str, Table] = {}
 
@@ -153,7 +150,7 @@ class ExcelLoader:
             table.add_column(header, col_type)
             print(f"    Колонка '{header}': {col_type.__name__}")
 
-        for row_idx, row in enumerate(data_rows):
+        for row in data_rows:
             row_dict = {}
             for i, header in enumerate(headers):
                 if i < len(row):
@@ -181,21 +178,20 @@ class ExcelLoader:
         for v in non_null:
             if all_int:
                 if isinstance(v, int):
-                    continue
+                    pass
                 elif isinstance(v, float) and v.is_integer():
-                    continue
-                elif isinstance(v, str) and v.strip().lstrip('-').isdigit():
-                    continue
+                    pass
+                elif isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                    pass
                 else:
                     all_int = False
 
             if all_float:
                 if isinstance(v, (int, float)):
-                    continue
+                    pass
                 elif isinstance(v, str):
                     try:
                         float(v)
-                        continue
                     except ValueError:
                         all_float = False
                 else:
@@ -203,11 +199,15 @@ class ExcelLoader:
 
             if all_date:
                 if isinstance(v, datetime):
-                    continue
+                    pass
                 elif isinstance(v, str):
                     date_formats = [
-                        "%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d",
-                        "%d-%m-%Y", "%Y%m%d", "%d.%m.%y"
+                        "%Y-%m-%d",
+                        "%d.%m.%Y",
+                        "%Y/%m/%d",
+                        "%d-%m-%Y",
+                        "%Y%m%d",
+                        "%d.%m.%y",
                     ]
                     for fmt in date_formats:
                         try:
@@ -248,8 +248,12 @@ class ExcelLoader:
                     return value
                 if isinstance(value, str):
                     date_formats = [
-                        "%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d",
-                        "%d-%m-%Y", "%Y%m%d", "%d.%m.%y"
+                        "%Y-%m-%d",
+                        "%d.%m.%Y",
+                        "%Y/%m/%d",
+                        "%d-%m-%Y",
+                        "%Y%m%d",
+                        "%d.%m.%y",
                     ]
                     for fmt in date_formats:
                         try:

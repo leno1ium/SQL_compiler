@@ -1,28 +1,27 @@
 from pathlib import Path
-from lark import Lark, Transformer
+from lark import Lark, Transformer, Token
+
 from SQL_compiler.parser.ast_nodes import *
 
-grammar_path = Path(__file__).parent / 'parser.lark'
-grammar = grammar_path.read_text(encoding='utf-8')
+grammar_path = Path(__file__).parent / "parser.lark"
+grammar = grammar_path.read_text(encoding="utf-8")
 parser = Lark(grammar, start="start", parser="lalr")
 
 
 class SQLASTBuilder(Transformer):
-    """Построитель AST для SQL SELECT запросов"""
-
     def _is_node(self, obj):
-        """Проверка, является ли объект узлом AST"""
         return isinstance(obj, AstNode)
 
     def _kw(self, obj) -> str:
-        """Нормализация ключевых слов/токенов для сравнения"""
         try:
-            # Token.type стабильно хранит имя терминала (SELECT/FROM/WHERE/...)
             if isinstance(obj, Token):
                 return str(obj.type).upper()
         except Exception:
             pass
         return str(obj).upper()
+
+    def _non_tokens(self, args):
+        return [a for a in args if not isinstance(a, Token)]
 
     def num(self, args):
         return NumNode(args[0])
@@ -31,7 +30,7 @@ class SQLASTBuilder(Transformer):
         return StringNode(args[0])
 
     def bool(self, args):
-        return BoolNode(args[0].lower() == 'true')
+        return BoolNode(args[0].lower() == "true")
 
     def null_const(self, args):
         return NullNode()
@@ -43,24 +42,21 @@ class SQLASTBuilder(Transformer):
         return IdentNode(args[0])
 
     def compound_ident(self, args):
-        """Обработка составных идентификаторов"""
         if len(args) == 1:
             return args[0]
+        left = args[0]
+        right = args[2]
+
+        if isinstance(left, CompoundIdentNode):
+            parts = left.parts + [right]
+        elif isinstance(left, IdentNode):
+            parts = [left.name, right]
         else:
-            left = args[0]
-            right = args[2]  # IDENT
+            parts = [str(left), right]
 
-            if isinstance(left, CompoundIdentNode):
-                parts = left.parts + [right]
-            elif isinstance(left, IdentNode):
-                parts = [left.name, right]
-            else:
-                parts = [str(left), right]
-
-            return CompoundIdentNode(parts)
+        return CompoundIdentNode(parts)
 
     def ident(self, args):
-        # ident: compound_ident | simple_ident
         return args[0]
 
     def plus(self, args):
@@ -72,17 +68,15 @@ class SQLASTBuilder(Transformer):
         return UnOpNode(UnOp.MINUS, node)
 
     def not_expr(self, args):
-        # args usually: [Token('NOT'), <expr>]
         node = next((a for a in args if isinstance(a, AstNode)), None)
         if node is None and len(args) >= 2:
             node = args[1]
         return UnOpNode(UnOp.NOT, node)
 
     def is_null(self, args):
-        """IS NULL expression: like_expr IS NOT? NULL"""
-        if len(args) == 3:  # expr IS NULL
+        if len(args) == 3:
             return IsNullNode(args[0], negated=False)
-        elif len(args) == 4:  # expr IS NOT NULL
+        elif len(args) == 4:
             return IsNullNode(args[0], negated=True)
         else:
             return IsNullNode(args[0], negated=False)
@@ -139,23 +133,20 @@ class SQLASTBuilder(Transformer):
         return BinOpNode(BinOp.NE, args[0], args[1])
 
     def and_expr(self, args):
-        """AND expression: between_expr (AND between_expr)*"""
         result = None
         for arg in args:
-            if self._kw(arg) == 'AND':
+            if self._kw(arg) == "AND":
                 continue
             if result is None:
                 result = arg
             else:
                 result = BinOpNode(BinOp.AND, result, arg)
-
         return result if result is not None else (args[0] if args else None)
 
     def or_expr(self, args):
-        """OR expression: and_expr (OR and_expr)*"""
         result = None
         for arg in args:
-            if self._kw(arg) == 'OR':
+            if self._kw(arg) == "OR":
                 continue
             if result is None:
                 result = arg
@@ -164,9 +155,8 @@ class SQLASTBuilder(Transformer):
         return result if result is not None else (args[0] if args else None)
 
     def like(self, args):
-        """LIKE expression: compare_expr NOT? LIKE compare_expr"""
         nodes = [a for a in args if isinstance(a, AstNode)]
-        negated = any(self._kw(a) == 'NOT' for a in args)
+        negated = any(self._kw(a) == "NOT" for a in args)
         if len(nodes) >= 2:
             left, right = nodes[0], nodes[1]
             op = BinOp.NOT_LIKE if negated else BinOp.LIKE
@@ -179,42 +169,23 @@ class SQLASTBuilder(Transformer):
         return BinOpNode(BinOp.NOT_LIKE, args[0], args[1])
 
     def in_expr(self, args):
-        """
-        is_expr IN LPAREN expr_list RPAREN
-        """
         expr = next(a for a in args if isinstance(a, AstNode))
         elements = next(a for a in args if isinstance(a, list))
         return InNode(expr, elements, negated=False)
 
     def not_in_expr(self, args):
-        """
-        is_expr NOT IN LPAREN expr_list RPAREN
-        """
         expr = args[0]
         elements = next(a for a in args if isinstance(a, list))
         return InNode(expr, elements, negated=True)
 
     def in_subquery(self, args):
-        """
-        Grammar:
-        is_expr IN LPAREN select_stmt RPAREN -> in_subquery
-        """
         expr = args[0]
         subquery = next(a for a in args if isinstance(a, SelectStmtNode))
         return InSubqueryNode(expr, subquery, negated=False)
 
-    # def not_in(self, args):
-    #     expr = args[0]
-    #     elements = args[4] if isinstance(args[4], list) else [args[4]]
-    #     return InNode(expr, elements, negated=True)
-
     def between(self, args):
-        """BETWEEN expression: in_expr NOT? BETWEEN in_expr AND in_expr"""
-        # args может быть: [expr, 'BETWEEN', low, 'AND', high]
-        # или [expr, 'NOT', 'BETWEEN', low, 'AND', high]
-
         nodes = [a for a in args if isinstance(a, AstNode)]
-        negated = any(self._kw(a) == 'NOT' for a in args)
+        negated = any(self._kw(a) == "NOT" for a in args)
         if len(nodes) >= 3:
             return BetweenNode(nodes[0], nodes[1], nodes[2], negated=negated)
         if len(args) == 5:
@@ -224,41 +195,22 @@ class SQLASTBuilder(Transformer):
         return BetweenNode(args[0], args[2], args[4], negated=False)
 
     def not_like_tail(self, args):
-        # args: [compare_expr] или [Token(LIKE), compare_expr]
         right = next(a for a in args if isinstance(a, AstNode))
-        return ('NOT_LIKE', right)
+        return ("NOT_LIKE", right)
 
     def not_between_tail(self, args):
         nodes = [a for a in args if isinstance(a, AstNode)]
-        return ('NOT_BETWEEN', nodes[0], nodes[1])
+        return ("NOT_BETWEEN", nodes[0], nodes[1])
 
     def not_in_tail(self, args):
         elements = next(a for a in args if isinstance(a, list))
-        return ('NOT_IN', elements)
+        return ("NOT_IN", elements)
 
     def not_in_subquery(self, args):
         subquery = next(a for a in args if isinstance(a, SelectStmtNode))
-        return ('NOT_IN_SUBQUERY', subquery)
-
-    # def not_in_tail(self, args):
-    #     # Grammar: IN LPAREN expr_list RPAREN -> not_in_tail
-    #     elements = None
-    #     for a in args:
-    #         if isinstance(a, list):
-    #             elements = a
-    #             break
-    #     if elements is None:
-    #         # fallback
-    #         elements = args[0] if isinstance(args[0], list) else [args[0]]
-    #     return ('NOT_IN', elements)
+        return ("NOT_IN_SUBQUERY", subquery)
 
     def not_between_like(self, args):
-        """
-        Grammar:
-        in_expr NOT not_between_like_tail
-        Реальные args могут содержать Token('NOT')
-        """
-
         left = None
         tail = None
 
@@ -273,120 +225,90 @@ class SQLASTBuilder(Transformer):
 
         kind = tail[0]
 
-        if kind == 'NOT_BETWEEN':
+        if kind == "NOT_BETWEEN":
             _, low, high = tail
             return BetweenNode(left, low, high, negated=True)
 
-        if kind == 'NOT_LIKE':
+        if kind == "NOT_LIKE":
             _, right = tail
             return BinOpNode(BinOp.NOT_LIKE, left, right)
 
-        if kind == 'NOT_IN':
+        if kind == "NOT_IN":
             _, elements = tail
             return InNode(left, elements, negated=True)
 
-        if kind == 'NOT_IN_SUBQUERY':
+        if kind == "NOT_IN_SUBQUERY":
             _, subquery = tail
             return InSubqueryNode(left, subquery, negated=True)
 
         raise ValueError(f"Unknown NOT tail kind: {kind}")
 
     def expr_list(self, args):
-        """Обработка списка выражений"""
         result = []
         for arg in args:
             if isinstance(arg, AstNode):
                 result.append(arg)
-            elif arg != ',':
-                if isinstance(arg, AstNode):
-                    result.append(arg)
         return result
 
     def exists_subquery(self, args):
-        """EXISTS (subquery) or NOT EXISTS (subquery)"""
-        # args: [EXISTS, LPAREN, select_stmt, RPAREN]
-        # или [NOT, EXISTS, LPAREN, select_stmt, RPAREN]
-        if len(args) == 4:  # EXISTS (subquery)
+        if len(args) == 4:
             return ExistsNode(args[2], negated=False)
-        elif len(args) == 5:  # NOT EXISTS (subquery)
+        elif len(args) == 5:
             return ExistsNode(args[3], negated=True)
         return SubQueryNode(args[2])
 
     def distinct_args(self, items):
-        # items = expr_list
         return DistinctArgsNode(items)
 
     def star_args(self, items):
-        # items = [Token('*')]
         return StarNode()
 
     def expr_args(self, items):
-        # items уже list[ExprNode]
         return items
 
     def function_call(self, items):
-        """
-        items:
-          [IDENT]
-          [IDENT, StarNode]
-          [IDENT, DistinctArgsNode]
-          [IDENT, list[ExprNode]]
-        """
+        filtered = [x for x in items if not isinstance(x, Token)]
+        if not items:
+            return FuncCallNode("", [])
+
         func_name = str(items[0]).upper()
 
-        # COUNT()
-        if len(items) == 1:
+        if not filtered:
             return FuncCallNode(func_name, [])
 
-        arg = items[1]
+        arg = filtered[0]
 
-        # COUNT(*)
         if isinstance(arg, StarNode):
-            return FuncCallNode(
-                name=func_name,
-                args=[arg],
-                distinct=False
-            )
+            return FuncCallNode(func_name, [arg], distinct=False)
 
-        # COUNT(DISTINCT ...)
         if isinstance(arg, DistinctArgsNode):
-            return FuncCallNode(
-                name=func_name,
-                args=arg.args,
-                distinct=True
-            )
+            return FuncCallNode(func_name, arg.args, distinct=True)
 
-        # COUNT(expr1, expr2, ...)
         if isinstance(arg, list):
-            return FuncCallNode(
-                name=func_name,
-                args=arg,
-                distinct=False
-            )
+            return FuncCallNode(func_name, arg, distinct=False)
 
-        # fallback (на всякий случай)
-        return FuncCallNode(func_name, [arg])
+        if isinstance(arg, AstNode):
+            return FuncCallNode(func_name, [arg], distinct=False)
 
+        return FuncCallNode(func_name, [])
 
     def select_item(self, args):
-        if len(args) == 1:
-            return SelectItemNode(args[0], None)
-        else:
-            # expr AS? ident
-            expr = args[0]
-            alias = args[2] if len(args) > 2 else args[1]
-            if isinstance(alias, IdentNode):
-                alias = alias.name
-            return SelectItemNode(expr, alias)
+        filtered = [a for a in args if not isinstance(a, Token)]
+        if len(filtered) == 1:
+            return SelectItemNode(filtered[0], None)
+        expr = filtered[0]
+        alias = filtered[1] if len(filtered) > 1 else None
+        if isinstance(alias, IdentNode):
+            alias = alias.name
+        return SelectItemNode(expr, alias)
 
     def select_all(self, args):
         return SelectItemNode(StarNode(), None)
 
     def select_list(self, args):
-        """Обработка списка выражений SELECT"""
         result = []
         for arg in args:
-            if arg is None or arg == ',':
+            if arg is None or arg == ",":
                 continue
             if isinstance(arg, AstNode) or isinstance(arg, SelectItemNode):
                 result.append(arg)
@@ -395,41 +317,45 @@ class SQLASTBuilder(Transformer):
         return result
 
     def table_base(self, args):
-        name = args[0]
+        filtered = [a for a in args if not isinstance(a, Token)]
+        if not filtered:
+            return TableBaseNode("")
+
+        name = filtered[0]
         if isinstance(name, IdentNode):
             name = name.name
-        # Grammar: ident (AS? ident)?
-        # Возможные варианты args:
-        # - [name]
-        # - [name, alias]
-        # - [name, 'AS', alias]
+
         alias = None
-        if len(args) == 2:
-            alias = args[1]
-        elif len(args) >= 3:
-            alias = args[2]
+        if len(filtered) == 2:
+            alias = filtered[1]
+        elif len(filtered) >= 3:
+            alias = filtered[2]
+
         if isinstance(alias, IdentNode):
             alias = alias.name
+
         return TableBaseNode(str(name), alias)
 
     def table_subquery(self, args):
-        query = args[1]  # LPAREN select_stmt RPAREN
-        alias = args[3] if len(args) > 3 else None
+        filtered = [a for a in args if not isinstance(a, Token)]
+        query = filtered[0]
+        alias = filtered[1] if len(filtered) > 1 else None
         if isinstance(alias, IdentNode):
             alias = alias.name
         return TableSubqueryNode(query, alias)
 
     def table_ref(self, args):
-        # args: [table_primary, join_clause1, join_clause2, ...]
         base = args[0]
-
         joins = []
         for arg in args[1:]:
             if isinstance(arg, JoinNode):
                 joins.append(arg)
 
-        # динамически добавляем joins к таблице
-        base.joins = joins
+        if hasattr(base, "joins"):
+            base.joins.extend(joins)
+        else:
+            base.joins = joins
+
         return base
 
     def table_refs(self, args):
@@ -440,86 +366,86 @@ class SQLASTBuilder(Transformer):
         return FromNode(tables)
 
     def join_clause(self, args):
-        # join_type? JOIN table_primary (ON expr)?
-        # Варианты:
-        # 1. [JOIN, table_primary]
-        # 2. [JOIN, table_primary, ON, expr]
-        # 3. [join_type, JOIN, table_primary]
-        # 4. [join_type, JOIN, table_primary, ON, expr]
+        filtered = [a for a in args if not isinstance(a, Token)]
 
-        if len(args) == 2:  # JOIN table_primary
-            join_type = 'JOIN'
-            table = args[1]
-            condition = None
-        elif len(args) == 3:  # INNER JOIN table_primary
-            join_type = args[0]
-            table = args[2]
-            condition = None
-        elif len(args) == 4:  # JOIN table_primary ON expr
-            join_type = 'JOIN'
-            table = args[1]
-            condition = args[3]
-        elif len(args) == 5:  # INNER JOIN table_primary ON expr
-            join_type = args[0]
-            table = args[2]
-            condition = args[4]
+        if len(filtered) == 2:
+            if isinstance(filtered[0], str):
+                join_type = filtered[0]
+                table = filtered[1]
+                condition = None
+            else:
+                join_type = "JOIN"
+                table = filtered[0]
+                condition = filtered[1]
+        elif len(filtered) == 3:
+            if isinstance(filtered[0], str):
+                join_type = filtered[0]
+                table = filtered[1]
+                condition = filtered[2]
+            else:
+                join_type = "JOIN"
+                table = filtered[0]
+                condition = filtered[2]
         else:
-            join_type = 'JOIN'
-            table = args[1] if len(args) > 1 else None
-            condition = None
+            join_type = "JOIN"
+            table = filtered[0] if filtered else None
+            condition = filtered[1] if len(filtered) > 1 else None
 
         return JoinNode(join_type, table, condition)
 
     def inner_join(self, args):
-        return 'INNER JOIN'
+        return "INNER JOIN"
 
     def left_join(self, args):
-        if len(args) > 1 and args[1] == 'OUTER':
-            return 'LEFT OUTER JOIN'
-        return 'LEFT JOIN'
+        if len(args) > 1 and args[1] == "OUTER":
+            return "LEFT OUTER JOIN"
+        return "LEFT JOIN"
 
     def right_join(self, args):
-        if len(args) > 1 and args[1] == 'OUTER':
-            return 'RIGHT OUTER JOIN'
-        return 'RIGHT JOIN'
+        if len(args) > 1 and args[1] == "OUTER":
+            return "RIGHT OUTER JOIN"
+        return "RIGHT JOIN"
 
     def cross_join(self, args):
-        return 'CROSS JOIN'
+        return "CROSS JOIN"
 
     def ordering_term(self, args):
-        expr = args[0]
-        direction = self._kw(args[1]) if len(args) > 1 and self._kw(args[1]) in ('ASC', 'DESC') else 'ASC'
+        filtered = [a for a in args if not isinstance(a, Token)]
+        expr = filtered[0]
+        direction = "ASC"
+        # Проверяем наличие DESC в аргументах
+        for arg in args:
+            if self._kw(arg) == "DESC":
+                direction = "DESC"
+                break
+            elif self._kw(arg) == "ASC":
+                direction = "ASC"
         return OrderingTermNode(expr, direction)
 
     def order_by(self, args):
-        # ORDER BY ordering_term (COMMA ordering_term)*
         terms = []
-        for arg in args[2:]:
+        for arg in args:
             if isinstance(arg, OrderingTermNode):
                 terms.append(arg)
         return terms
 
     def limit_offset(self, args):
-        # LIMIT expr (OFFSET expr)?
-        limit = args[1]
-        offset = args[3] if len(args) > 3 else None
+        filtered = [a for a in args if not isinstance(a, Token)]
+        limit = filtered[0]
+        offset = filtered[1] if len(filtered) > 1 else None
         return LimitOffsetNode(limit, offset)
 
     def where(self, args):
-        """Обработка WHERE clause"""
-        # args: [WHERE, expr]
         if len(args) >= 2:
-            return args[1]  # возвращаем выражение
+            return args[1]
         return None
 
     def where_clause(self, args):
-        """Обработка WHERE clause: WHERE expr"""
         if len(args) >= 2:
             return args[1]
         return None
 
     def where_expr(self, args):
-        """Обработка WHERE выражения"""
         return args[0] if args else None
 
     def select_stmt(self, args):
@@ -534,51 +460,44 @@ class SQLASTBuilder(Transformer):
 
         i = 0
 
-        # SELECT
-        if i < len(args) and self._kw(args[i]) == 'SELECT':
+        if i < len(args) and self._kw(args[i]) == "SELECT":
             i += 1
 
-        # DISTINCT
-        if i < len(args) and self._kw(args[i]) == 'DISTINCT':
+        if i < len(args) and self._kw(args[i]) == "DISTINCT":
             distinct = True
             i += 1
 
-        # SELECT LIST
         if i < len(args) and isinstance(args[i], list):
             select_list = args[i]
             i += 1
 
-        # Проходим по остальным аргументам
         while i < len(args):
             current = args[i]
             current_kw = self._kw(current)
 
-            if current_kw == 'FROM':
+            if current_kw == "FROM":
                 i += 1
                 if i < len(args) and isinstance(args[i], AstNode):
                     from_node = args[i]
                     i += 1
 
-            elif current_kw == 'WHERE':
+            elif current_kw == "WHERE":
                 i += 1
-                # Пропускаем None
                 while i < len(args) and args[i] is None:
                     i += 1
-                # Следующий аргумент - выражение WHERE
-                # IMPORTANT: don't call hasattr(x,'tree') because property may raise if subtree contains None
                 if i < len(args) and isinstance(args[i], AstNode):
                     where_clause = args[i]
                     i += 1
 
-            elif current_kw == 'GROUP':
+            elif current_kw == "GROUP":
                 i += 1
-                if i < len(args) and self._kw(args[i]) == 'BY':
+                if i < len(args) and self._kw(args[i]) == "BY":
                     i += 1
                 if i < len(args) and isinstance(args[i], list):
                     group_by = args[i]
                     i += 1
 
-            elif current_kw == 'HAVING':
+            elif current_kw == "HAVING":
                 i += 1
                 while i < len(args) and args[i] is None:
                     i += 1
@@ -586,20 +505,21 @@ class SQLASTBuilder(Transformer):
                     having_clause = args[i]
                     i += 1
 
-            elif current_kw == 'ORDER':
+            elif current_kw == "ORDER":
                 i += 1
-                if i < len(args) and self._kw(args[i]) == 'BY':
+                if i < len(args) and self._kw(args[i]) == "BY":
                     i += 1
-                # Собираем ordering_term через запятые, пока не начнется следующий clause.
                 while i < len(args):
                     kw = self._kw(args[i])
-                    if kw in ('LIMIT', 'GROUP', 'HAVING', 'WHERE', 'FROM', 'SELECT', 'ORDER', 'OFFSET'):
+                    if kw in ("LIMIT", "GROUP", "HAVING", "WHERE", "FROM", "SELECT", "ORDER", "OFFSET"):
                         break
                     if isinstance(args[i], AstNode):
                         order_by.append(args[i])
                     i += 1
+                # Удаляем возможный None из order_by
+                order_by = [o for o in order_by if o is not None]
 
-            elif current_kw == 'LIMIT':
+            elif current_kw == "LIMIT":
                 i += 1
                 limit = None
                 offset = None
@@ -608,7 +528,7 @@ class SQLASTBuilder(Transformer):
                 if i < len(args) and isinstance(args[i], AstNode):
                     limit = args[i]
                     i += 1
-                if i < len(args) and self._kw(args[i]) == 'OFFSET':
+                if i < len(args) and self._kw(args[i]) == "OFFSET":
                     i += 1
                     while i < len(args) and args[i] is None:
                         i += 1
@@ -628,11 +548,10 @@ class SQLASTBuilder(Transformer):
             group_by=group_by,
             having_clause=having_clause,
             order_by=order_by,
-            limit_offset=limit_offset
+            limit_offset=limit_offset,
         )
 
     def _count_conditions(self, node):
-        """Подсчет количества условий в AND узле"""
         if isinstance(node, BinOpNode) and node.op == BinOp.AND:
             return self._count_conditions(node.arg1) + self._count_conditions(node.arg2)
         return 1
@@ -650,7 +569,6 @@ class SQLASTBuilder(Transformer):
 
 
 def parse(sql_query: str) -> SelectStmtNode:
-    """Парсинг SQL запроса в AST"""
     try:
         tree = parser.parse(sql_query)
         ast = SQLASTBuilder().transform(tree)
@@ -660,7 +578,6 @@ def parse(sql_query: str) -> SelectStmtNode:
 
 
 def print_ast(sql_query: str):
-    """Парсинг и вывод AST в виде дерева"""
     try:
         ast = parse(sql_query)
         print("\nAST Tree:")

@@ -1,12 +1,14 @@
 from pathlib import Path
-from openpyxl.utils import datetime
+from datetime import datetime
+
+import openpyxl
+
 from SQL_compiler.executor.table import ExcelLoader
 from SQL_compiler.executor.executor import QueryExecutor
 from SQL_compiler.parser.parser import parse
 
 
 def load_excel_file() -> Path:
-
     while True:
         print("\nВыберите действие:")
         print("1. Указать путь к существующему Excel файлу")
@@ -23,8 +25,8 @@ def load_excel_file() -> Path:
                 print(f"Файл не найден: {path}")
                 continue
 
-            if not path.suffix.lower() in ['.xlsx', '.xls']:
-                print(f"Файл должен быть Excel (.xlsx или .xls)")
+            if path.suffix.lower() not in [".xlsx", ".xls"]:
+                print("Файл должен быть Excel (.xlsx или .xls)")
                 continue
 
             return path
@@ -34,15 +36,13 @@ def load_excel_file() -> Path:
 
         elif choice == "3":
             print("Выход из программы...")
-            exit(0)
+            raise SystemExit(0)
 
         else:
             print("Неверный выбор. Попробуйте снова.")
 
 
 def create_sample_excel() -> Path:
-    import openpyxl
-
     print("\nСоздание тестового Excel файла...")
 
     wb = openpyxl.Workbook()
@@ -80,16 +80,16 @@ def create_sample_excel() -> Path:
         ws2.cell(row=1, column=col, value=header)
 
     orders_data = [
-        [1, 1, 1, 1500.50, "2023-01-15"],
-        [2, 2, 2, 2500.00, "2023-01-20"],
-        [3, 1, 3, 800.75, "2023-02-01"],
-        [4, 3, 1, 1500.50, "2023-02-10"],
-        [5, 4, 2, 2500.00, "2023-02-15"],
-        [6, 1, 4, 1200.00, "2023-03-01"],
-        [7, 5, 1, 1500.50, "2023-03-05"],
-        [8, 2, 3, 800.75, "2023-03-10"],
-        [9, 6, 4, 1200.00, "2023-03-15"],
-        [10, 7, 2, 2500.00, "2023-03-20"],
+        [1, 1, 1, 1500.50, datetime(2023, 1, 15)],
+        [2, 2, 2, 2500.00, datetime(2023, 1, 20)],
+        [3, 1, 3, 800.75, datetime(2023, 2, 1)],
+        [4, 3, 1, 1500.50, datetime(2023, 2, 10)],
+        [5, 4, 2, 2500.00, datetime(2023, 2, 15)],
+        [6, 1, 4, 1200.00, datetime(2023, 3, 1)],
+        [7, 5, 1, 1500.50, datetime(2023, 3, 5)],
+        [8, 2, 3, 800.75, datetime(2023, 3, 10)],
+        [9, 6, 4, 1200.00, datetime(2023, 3, 15)],
+        [10, 7, 2, 2500.00, datetime(2023, 3, 20)],
     ]
 
     for row_idx, row in enumerate(orders_data, 2):
@@ -124,18 +124,18 @@ def create_sample_excel() -> Path:
         ws4.cell(row=1, column=col, value=header)
 
     sales_data = [
-        [1, "Laptop", "Electronics", 2, "2023-01-15"],
-        [2, "Mouse", "Accessories", 5, "2023-01-16"],
-        [3, "Smartphone", "Electronics", 1, "2023-01-17"],
-        [4, "Keyboard", "Accessories", 3, "2023-01-18"],
-        [5, "Laptop", "Electronics", 1, "2023-01-19"],
-        [6, "Headphones", "Electronics", 4, "2023-01-20"],
-        [7, "Mouse", "Accessories", 2, "2023-01-21"],
-        [8, "Monitor", "Electronics", 1, "2023-01-22"],
-        [9, "Laptop", "Electronics", 3, "2023-01-23"],
-        [10, "Keyboard", "Accessories", 2, "2023-01-24"],
-        [11, "Smartphone", "Electronics", 2, "2023-01-25"],
-        [12, "Mouse", "Accessories", 4, "2023-01-26"],
+        [1, "Laptop", "Electronics", 2, datetime(2023, 1, 15)],
+        [2, "Mouse", "Accessories", 5, datetime(2023, 1, 16)],
+        [3, "Smartphone", "Electronics", 1, datetime(2023, 1, 17)],
+        [4, "Keyboard", "Accessories", 3, datetime(2023, 1, 18)],
+        [5, "Laptop", "Electronics", 1, datetime(2023, 1, 19)],
+        [6, "Headphones", "Electronics", 4, datetime(2023, 1, 20)],
+        [7, "Mouse", "Accessories", 2, datetime(2023, 1, 21)],
+        [8, "Monitor", "Electronics", 1, datetime(2023, 1, 22)],
+        [9, "Laptop", "Electronics", 3, datetime(2023, 1, 23)],
+        [10, "Keyboard", "Accessories", 2, datetime(2023, 1, 24)],
+        [11, "Smartphone", "Electronics", 2, datetime(2023, 1, 25)],
+        [12, "Mouse", "Accessories", 4, datetime(2023, 1, 26)],
     ]
 
     for row_idx, row in enumerate(sales_data, 2):
@@ -146,7 +146,6 @@ def create_sample_excel() -> Path:
     wb.save(filepath)
 
     print(f"Создан тестовый Excel файл: {filepath.absolute()}")
-
     return filepath
 
 
@@ -172,7 +171,7 @@ def print_full_table(table, title: str = None):
             int: "INTEGER",
             float: "FLOAT",
             str: "STRING",
-            datetime: "DATE"
+            datetime: "DATE",
         }.get(col_type, str(col_type))
 
         examples = []
@@ -181,6 +180,8 @@ def print_full_table(table, title: str = None):
             if val is not None:
                 if isinstance(val, float):
                     examples.append(f"{val:.2f}")
+                elif isinstance(val, datetime):
+                    examples.append(val.strftime("%Y-%m-%d %H:%M:%S"))
                 else:
                     examples.append(str(val))
 
@@ -202,6 +203,8 @@ def print_full_table(table, title: str = None):
                 row_values.append(f"{'NULL':<15}")
             elif isinstance(val, float):
                 row_values.append(f"{val:<15.2f}")
+            elif isinstance(val, datetime):
+                row_values.append(f"{val.strftime('%Y-%m-%d %H:%M:%S'):<15}")
             else:
                 row_values.append(f"{str(val):<15}")
 
@@ -240,6 +243,8 @@ def run_test(executor: QueryExecutor, sql: str, description: str):
                         row_values.append(f"{'NULL':<15}")
                     elif isinstance(v, float):
                         row_values.append(f"{v:<15.2f}")
+                    elif isinstance(v, datetime):
+                        row_values.append(f"{v.strftime('%Y-%m-%d %H:%M:%S'):<15}")
                     else:
                         row_values.append(f"{str(v):<15}")
                 print(" | ".join(row_values))
@@ -267,16 +272,15 @@ def verify_test_data(tables):
             print(f"Таблица '{table_name}' найдена ({len(table)} строк)")
 
             if table_name == "users":
-                a_names = [row for row in table.rows if row.get('name', '').startswith('A')]
+                a_names = [row for row in table.rows if row.get("name", "").startswith("A")]
                 print(f"   • Имена на 'A': {len(a_names)} шт. - {[row['name'] for row in a_names]}")
 
-                null_emails = [row for row in table.rows if row.get('email') is None]
+                null_emails = [row for row in table.rows if row.get("email") is None]
                 print(f"   • NULL email: {len(null_emails)} шт.")
 
             elif table_name == "orders":
-                user_ids = set(row['user_id'] for row in table.rows)
+                user_ids = set(row["user_id"] for row in table.rows)
                 print(f"   • user_id в заказах: {sorted(user_ids)}")
-
         else:
             print(f"Таблица '{table_name}' НЕ найдена")
             missing_tables.append(table_name)
@@ -285,7 +289,7 @@ def verify_test_data(tables):
         print(f"\nОтсутствуют таблицы: {', '.join(missing_tables)}")
         print("   Тесты, обращающиеся к этим таблицам, будут падать с ошибкой 'Table not found'")
     else:
-        print(f"\nВсе необходимые таблицы присутствуют!")
+        print("\nВсе необходимые таблицы присутствуют!")
 
     print("=" * 60)
 
@@ -296,11 +300,11 @@ def load_tests_from_file() -> list:
     try:
         from SQL_compiler.test import test as test_module
 
-        if hasattr(test_module, 'tests'):
+        if hasattr(test_module, "tests"):
             tests_from_file = test_module.tests
 
             for i, sql in enumerate(tests_from_file, 1):
-                clean_sql = sql.strip().rstrip(';')
+                clean_sql = sql.strip().rstrip(";")
                 description = f"Тест {i}: {clean_sql[:50]}..." if len(clean_sql) > 50 else clean_sql
                 tests.append((sql, description))
         else:
@@ -323,7 +327,6 @@ def load_tests_from_file() -> list:
 
 
 def main():
-
     excel_file = load_excel_file()
     loader = ExcelLoader()
 

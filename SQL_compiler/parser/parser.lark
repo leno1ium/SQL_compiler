@@ -117,7 +117,6 @@ expr_args: expr_list
         | is_expr IN LPAREN expr_list RPAREN -> in_expr
         | is_expr IN LPAREN select_stmt RPAREN -> in_subquery
 
-
 ?between_expr: in_expr
              | in_expr BETWEEN in_expr AND in_expr -> between
              | in_expr NOT not_between_like_tail -> not_between_like
@@ -143,7 +142,6 @@ select_stmt: SELECT distinct? select_list \
              SEMICOLON? -> select_stmt
 
 where_clause: WHERE expr -> where_clause
-
 where_expr: expr -> where_expr
 
 select_list: select_item (COMMA select_item)* -> select_list

@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
+
 from SQL_compiler.executor.table import Table
 from SQL_compiler.executor.execution_context import RowContext, ExpressionEvaluator, GroupContext
 from SQL_compiler.parser.ast_nodes import *
@@ -15,18 +16,34 @@ class QueryExecutor:
         if stmt.from_node is None or not stmt.from_node.tables:
             return self._execute_without_from(stmt)
 
-        result_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
+        source_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
 
         if stmt.group_by:
-            result_rows = self._execute_group_by(result_rows, stmt.group_by, stmt.select_list, stmt.having_clause)
-        else:
-            result_rows = self._execute_select(result_rows, stmt.select_list)
+            result_rows = self._execute_group_by(
+                source_rows,
+                stmt.group_by,
+                stmt.select_list,
+                stmt.having_clause,
+            )
+
+            if stmt.distinct:
+                result_rows = self._apply_distinct(result_rows)
+
+            if stmt.order_by:
+                result_rows = self._apply_order_by(result_rows, stmt.order_by)
+
+            if stmt.limit_offset:
+                result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
+
+            return result_rows
+
+        if stmt.order_by:
+            source_rows = self._apply_order_by(source_rows, stmt.order_by)
+
+        result_rows = self._execute_select(source_rows, stmt.select_list)
 
         if stmt.distinct:
             result_rows = self._apply_distinct(result_rows)
-
-        if stmt.order_by:
-            result_rows = self._apply_order_by(result_rows, stmt.order_by)
 
         if stmt.limit_offset:
             result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
@@ -45,96 +62,39 @@ class QueryExecutor:
                 print(f"Ошибка: {e}")
         return result
 
-    def _execute_from_and_joins(self, from_node: FromNode, where_clause: Optional[ExprNode]) -> List[Dict[str, Any]]:
+    def _execute_from_and_joins(
+        self,
+        from_node: FromNode,
+        where_clause: Optional[AstNode],
+    ) -> List[Dict[str, Any]]:
         if not from_node.tables:
             return []
 
-        current_rows = None
-        current_table = None
+        first_table_node = from_node.tables[0]
 
-        for table_node in from_node.tables:
+        if isinstance(first_table_node, TableBaseNode):
+            current_rows = self._get_table_rows_with_alias(first_table_node)
+
+            if hasattr(first_table_node, "joins") and first_table_node.joins:
+                for join_node in first_table_node.joins:
+                    current_rows = self._process_join(current_rows, join_node)
+
+        elif isinstance(first_table_node, TableSubqueryNode):
+            current_rows = self._get_subquery_rows(first_table_node)
+        else:
+            current_rows = []
+
+        for table_node in from_node.tables[1:]:
             if isinstance(table_node, TableBaseNode):
-                table = self.tables.get(table_node.name)
-                if table is None:
-                    continue
-
-                if current_rows is None:
-                    current_rows = [row.copy() for row in table.rows]
-                    current_table = table
-                else:
-                    new_rows = []
-                    for existing_row in current_rows:
-                        for new_row in table.rows:
-                            merged = existing_row.copy()
-                            for key, value in new_row.items():
-                                merged[key] = value
-                            new_rows.append(merged)
-                    current_rows = new_rows
-
+                right_rows = self._get_table_rows_with_alias(table_node)
+                current_rows = self._cross_join(current_rows, right_rows)
+            elif isinstance(table_node, TableSubqueryNode):
+                right_rows = self._get_subquery_rows(table_node)
+                current_rows = self._cross_join(current_rows, right_rows)
             elif isinstance(table_node, JoinNode):
-                right_table = self._get_table_from_node(table_node.table)
-                if right_table is None:
-                    continue
+                current_rows = self._process_join(current_rows, table_node)
 
-                condition = None
-                if table_node.condition:
-                    if isinstance(table_node.condition, OnNode):
-                        condition = table_node.condition.condition
-                    else:
-                        condition = table_node.condition
-
-                join_type = table_node.join_type
-
-                new_rows = []
-                for existing_row in current_rows:
-                    matched = False
-                    for right_row in right_table.rows:
-                        merged = existing_row.copy()
-                        for key, value in right_row.items():
-                            merged[key] = value
-
-                        if condition:
-                            temp_table = self._create_temp_table(merged)
-                            context = RowContext(temp_table, merged)
-                            evaluator = ExpressionEvaluator(context)
-                            try:
-                                if not bool(evaluator.evaluate(condition)):
-                                    continue
-                            except Exception:
-                                continue
-
-                        if where_clause:
-                            temp_table = self._create_temp_table(merged)
-                            context = RowContext(temp_table, merged)
-                            evaluator = ExpressionEvaluator(context)
-                            try:
-                                if not bool(evaluator.evaluate(where_clause)):
-                                    continue
-                            except Exception:
-                                continue
-
-                        matched = True
-                        new_rows.append(merged)
-
-                    if join_type in ('LEFT JOIN', 'LEFT OUTER JOIN') and not matched:
-                        merged = existing_row.copy()
-                        for col in right_table.column_names:
-                            merged[col] = None
-                        if where_clause:
-                            temp_table = self._create_temp_table(merged)
-                            context = RowContext(temp_table, merged)
-                            evaluator = ExpressionEvaluator(context)
-                            try:
-                                if bool(evaluator.evaluate(where_clause)):
-                                    new_rows.append(merged)
-                            except Exception:
-                                pass
-                        else:
-                            new_rows.append(merged)
-
-                current_rows = new_rows
-
-        if where_clause and current_rows and not self._was_where_applied_during_joins(from_node):
+        if where_clause and current_rows:
             filtered_rows = []
             for row in current_rows:
                 temp_table = self._create_temp_table(row)
@@ -149,23 +109,172 @@ class QueryExecutor:
 
         return current_rows if current_rows else []
 
-    def _was_where_applied_during_joins(self, from_node: FromNode) -> bool:
-        if not from_node or not from_node.tables:
-            return False
-        for table_node in from_node.tables:
-            if isinstance(table_node, JoinNode):
-                return True
-        return False
-
-    def _get_table_from_node(self, node: AstNode) -> Optional[Table]:
-        if isinstance(node, TableBaseNode):
-            return self.tables.get(node.name)
-        elif isinstance(node, TableSubqueryNode):
+    def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
+        try:
             sub_executor = QueryExecutor(self.tables)
-            sub_result = sub_executor.execute(node.query)
-            if sub_result:
-                return self._dict_to_table(f"_subquery", sub_result)
-        return None
+            rows = sub_executor.execute(table_node.query)
+        except Exception:
+            return []
+
+        alias = table_node.alias
+        if not rows:
+            return []
+
+        result = []
+        for row in rows:
+            prefixed_row = {}
+            for col, val in row.items():
+                prefixed_row[col] = val
+                if alias:
+                    prefixed_row[f"{alias}.{col}"] = val
+            result.append(prefixed_row)
+        return result
+
+    def _cross_join(self, left_rows: List[Dict[str, Any]], right_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not left_rows:
+            return right_rows[:]
+        if not right_rows:
+            return left_rows[:]
+
+        result = []
+        for left_row in left_rows:
+            for right_row in right_rows:
+                result.append(self._merge_rows(left_row, right_row))
+        return result
+
+    def _get_table_rows_with_alias(self, table_node: TableBaseNode) -> List[Dict[str, Any]]:
+        table = self.tables.get(table_node.name)
+        if table is None:
+            return []
+
+        alias = table_node.alias or table_node.name
+        rows = []
+
+        for row in table.rows:
+            prefixed_row = {}
+            for col, val in row.items():
+                prefixed_row[f"{table.name}.{col}"] = val
+                prefixed_row[f"{alias}.{col}"] = val
+                if col not in prefixed_row:
+                    prefixed_row[col] = val
+            rows.append(prefixed_row)
+
+        return rows
+
+    def _collect_keys(self, rows: List[Dict[str, Any]]) -> List[str]:
+        keys = []
+        seen = set()
+        for row in rows:
+            for k in row.keys():
+                if k not in seen:
+                    seen.add(k)
+                    keys.append(k)
+        return keys
+
+    def _merge_rows(self, left_row: Dict[str, Any], right_row: Dict[str, Any]) -> Dict[str, Any]:
+        merged = left_row.copy()
+        for k, v in right_row.items():
+            if k not in merged:
+                merged[k] = v
+        return merged
+
+    def _row_matches_condition(self, merged: Dict[str, Any], condition: Optional[AstNode]) -> bool:
+        if condition is None:
+            return True
+
+        temp_table = self._create_temp_table(merged)
+        context = RowContext(temp_table, merged)
+        evaluator = ExpressionEvaluator(context)
+        try:
+            return bool(evaluator.evaluate(condition))
+        except Exception:
+            return False
+
+    def _null_extended_row(self, base_row: Dict[str, Any], null_keys: List[str]) -> Dict[str, Any]:
+        row = base_row.copy()
+        for key in null_keys:
+            if key not in row:
+                row[key] = None
+        return row
+
+    def _process_join(self, left_rows: List[Dict[str, Any]], join_node: JoinNode) -> List[Dict[str, Any]]:
+        if isinstance(join_node.table, TableBaseNode):
+            right_rows = self._get_table_rows_with_alias(join_node.table)
+            right_null_keys = self._collect_keys(right_rows)
+        elif isinstance(join_node.table, TableSubqueryNode):
+            right_rows = self._get_subquery_rows(join_node.table)
+            right_null_keys = self._collect_keys(right_rows)
+        else:
+            right_rows = []
+            right_null_keys = []
+
+        join_type = join_node.join_type.upper().strip()
+
+        if join_type in ("JOIN", "INNER", "INNER JOIN"):
+            join_type = "INNER JOIN"
+        elif join_type in ("LEFT", "LEFT JOIN", "LEFT OUTER JOIN"):
+            join_type = "LEFT JOIN"
+        elif join_type in ("RIGHT", "RIGHT JOIN", "RIGHT OUTER JOIN"):
+            join_type = "RIGHT JOIN"
+        elif join_type in ("CROSS", "CROSS JOIN"):
+            join_type = "CROSS JOIN"
+
+        if join_type == "CROSS JOIN":
+            return self._cross_join(left_rows, right_rows)
+
+        if join_type == "RIGHT JOIN":
+            # Переворачиваем JOIN и используем LEFT JOIN
+            swapped = self._process_join_with_type(
+                right_rows,
+                left_rows,
+                join_node.condition,
+                "LEFT JOIN",
+                self._collect_keys(left_rows),
+            )
+            return swapped
+
+        return self._process_join_with_type(
+            left_rows,
+            right_rows,
+            join_node.condition,
+            join_type,
+            right_null_keys,
+        )
+
+    def _process_join_with_type(
+        self,
+        left_rows: List[Dict[str, Any]],
+        right_rows: List[Dict[str, Any]],
+        condition: Optional[AstNode],
+        join_type: str,
+        right_null_keys: List[str],
+    ) -> List[Dict[str, Any]]:
+        if not left_rows:
+            return []
+
+        if not right_rows:
+            if join_type == "LEFT JOIN":
+                return [self._null_extended_row(left_row, right_null_keys) for left_row in left_rows]
+            return []
+
+        result = []
+
+        for left_row in left_rows:
+            matched = False
+
+            for right_row in right_rows:
+                merged = self._merge_rows(left_row, right_row)
+
+                if not self._row_matches_condition(merged, condition):
+                    continue
+
+                matched = True
+                result.append(merged)
+
+            if join_type == "LEFT JOIN" and not matched:
+                result.append(self._null_extended_row(left_row, right_null_keys))
+
+        return result
 
     def _create_temp_table(self, row: Dict[str, Any]) -> Table:
         table = Table("temp")
@@ -178,17 +287,6 @@ class QueryExecutor:
         table.add_row(row)
         return table
 
-    def _dict_to_table(self, name: str, rows: List[Dict[str, Any]]) -> Table:
-        table = Table(name)
-        if not rows:
-            return table
-        for col in rows[0].keys():
-            col_type = type(rows[0][col]) if rows[0][col] is not None else str
-            table.add_column(col, col_type)
-        for row in rows:
-            table.add_row(row)
-        return table
-
     def _execute_select(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> List[Dict[str, Any]]:
         result_rows = []
         for row in rows:
@@ -198,8 +296,13 @@ class QueryExecutor:
             result_rows.append(selected_row)
         return result_rows
 
-    def _execute_group_by(self, rows: List[Dict[str, Any]], group_by: List[ExprNode],
-                          select_list: List[SelectItemNode], having_clause: Optional[ExprNode]) -> List[Dict[str, Any]]:
+    def _execute_group_by(
+        self,
+        rows: List[Dict[str, Any]],
+        group_by: List[ExprNode],
+        select_list: List[SelectItemNode],
+        having_clause: Optional[ExprNode],
+    ) -> List[Dict[str, Any]]:
         groups = {}
 
         for row in rows:
@@ -215,18 +318,17 @@ class QueryExecutor:
                 except Exception as e:
                     print(f"Ошибка при вычислении GROUP BY: {e}")
                     key_parts.append(None)
-            key = tuple(key_parts)
 
-            if key not in groups:
-                groups[key] = []
-            groups[key].append(row)
+            key = tuple(key_parts)
+            groups.setdefault(key, []).append(row)
 
         result_rows = []
 
         for group_key, group_rows in groups.items():
+            group_context = GroupContext(group_rows)
+            evaluator = ExpressionEvaluator(None, group_context)
+
             if having_clause:
-                group_context = GroupContext(group_rows)
-                evaluator = ExpressionEvaluator(None, group_context)
                 try:
                     if not bool(evaluator.evaluate(having_clause)):
                         continue
@@ -234,24 +336,22 @@ class QueryExecutor:
                     print(f"Ошибка при вычислении HAVING: {e}")
                     continue
 
-            group_context = GroupContext(group_rows)
-            evaluator = ExpressionEvaluator(None, group_context)
-
             row_dict = {}
             for item in select_list:
                 if isinstance(item.expr, StarNode):
                     if group_rows:
                         for col, val in group_rows[0].items():
                             row_dict[col] = val
-                else:
-                    try:
-                        value = evaluator.evaluate(item.expr)
-                        name = item.alias if item.alias else str(item.expr)
-                        row_dict[name] = value
-                    except Exception as e:
-                        print(f"Ошибка при вычислении SELECT: {e}")
-                        name = item.alias or str(item.expr)
-                        row_dict[name] = None
+                    continue
+
+                try:
+                    value = evaluator.evaluate(item.expr)
+                    name = item.alias if item.alias else str(item.expr)
+                    row_dict[name] = value
+                except Exception as e:
+                    print(f"Ошибка при вычислении SELECT: {e}")
+                    name = item.alias or str(item.expr)
+                    row_dict[name] = None
 
             for i, expr in enumerate(group_by):
                 col_name = str(expr)
@@ -269,7 +369,8 @@ class QueryExecutor:
         for item in select_list:
             if isinstance(item.expr, StarNode):
                 for col in context.table.column_names:
-                    result[col] = context.get_value(col)
+                    if col not in result:
+                        result[col] = context.get_value(col)
                 continue
 
             try:
@@ -280,54 +381,74 @@ class QueryExecutor:
                 print(f"Ошибка при вычислении выражения: {e}")
                 name = item.alias or str(item.expr)
                 result[name] = None
+
         return result
 
     def _apply_distinct(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         unique_rows = []
         seen = set()
         for row in rows:
-            row_tuple = tuple(sorted((k, v) for k, v in row.items()))
+            row_tuple = tuple(sorted((k, self._hashable_value(v)) for k, v in row.items()))
             if row_tuple not in seen:
                 seen.add(row_tuple)
                 unique_rows.append(row)
         return unique_rows
 
-    def _apply_order_by(self, rows: List[Dict[str, Any]], order_by: List[OrderingTermNode]) -> List[Dict[str, Any]]:
-        def sort_key(row):
-            temp_table = self._create_temp_table(row)
-            context = RowContext(temp_table, row)
-            evaluator = ExpressionEvaluator(context)
-            key = []
-            for term in order_by:
-                try:
-                    value = evaluator.evaluate(term.expr)
-                    key.append(value)
-                except:
-                    key.append(None)
-            return tuple(key)
+    def _hashable_value(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return tuple(self._hashable_value(v) for v in value)
+        if isinstance(value, dict):
+            return tuple(sorted((k, self._hashable_value(v)) for k, v in value.items()))
+        return value
 
-        reverse = any(term.direction == 'DESC' for term in order_by)
-        try:
-            return sorted(rows, key=sort_key, reverse=reverse)
-        except Exception as e:
-            print(f"Ошибка при сортировке: {e}")
+    def _sort_key_value(self, value: Any) -> Any:
+        if value is None:
+            return (1, None)
+        if isinstance(value, (int, float, str, bool)):
+            return (0, value)
+        return (0, str(value))
+
+    def _apply_order_by(self, rows: List[Dict[str, Any]], order_by: List[OrderingTermNode]) -> List[Dict[str, Any]]:
+        if not rows or not order_by:
             return rows
 
-    def _apply_limit_offset(self, rows: List[Dict[str, Any]],
-                            limit_offset: LimitOffsetNode) -> List[Dict[str, Any]]:
+        sorted_rows = rows[:]
+
+        for term in reversed(order_by):
+            def key_func(row):
+                temp_table = self._create_temp_table(row)
+                context = RowContext(temp_table, row)
+                evaluator = ExpressionEvaluator(context)
+                try:
+                    value = evaluator.evaluate(term.expr)
+                except Exception:
+                    value = None
+                return self._sort_key_value(value)
+
+            reverse = str(term.direction).upper() == "DESC"
+            sorted_rows = sorted(sorted_rows, key=key_func, reverse=reverse)
+
+        return sorted_rows
+
+    def _apply_limit_offset(
+        self,
+        rows: List[Dict[str, Any]],
+        limit_offset: LimitOffsetNode,
+    ) -> List[Dict[str, Any]]:
         evaluator = ExpressionEvaluator(None)
+
         try:
             limit_val = evaluator.evaluate(limit_offset.limit)
             limit = int(limit_val) if limit_val is not None else len(rows)
-        except:
+        except Exception:
             limit = len(rows)
 
         offset = 0
-        if limit_offset.offset:
+        if limit_offset.offset is not None:
             try:
                 offset_val = evaluator.evaluate(limit_offset.offset)
                 offset = int(offset_val) if offset_val is not None else 0
-            except:
+            except Exception:
                 offset = 0
 
         start = min(offset, len(rows))
