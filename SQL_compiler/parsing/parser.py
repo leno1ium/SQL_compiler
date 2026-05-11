@@ -1,7 +1,7 @@
 from pathlib import Path
 from lark import Lark, Transformer, Token
 
-from SQL_compiler.parser.ast_nodes import *
+from SQL_compiler.parsing.ast_nodes import *
 
 grammar_path = Path(__file__).parent / "parser.lark"
 grammar = grammar_path.read_text(encoding="utf-8")
@@ -9,10 +9,14 @@ parser = Lark(grammar, start="start", parser="lalr")
 
 
 class SQLASTBuilder(Transformer):
+    """Построитель AST для SQL SELECT запросов"""
+
     def _is_node(self, obj):
+        """Проверка, является ли объект узлом AST"""
         return isinstance(obj, AstNode)
 
     def _kw(self, obj) -> str:
+        """Нормализация ключевых слов/токенов для сравнения"""
         try:
             if isinstance(obj, Token):
                 return str(obj.type).upper()
@@ -42,6 +46,7 @@ class SQLASTBuilder(Transformer):
         return IdentNode(args[0])
 
     def compound_ident(self, args):
+        """Обработка составных идентификаторов"""
         if len(args) == 1:
             return args[0]
         left = args[0]

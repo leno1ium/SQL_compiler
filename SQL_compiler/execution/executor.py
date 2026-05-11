@@ -1,8 +1,8 @@
 from typing import List, Dict, Any, Optional
 
-from SQL_compiler.executor.table import Table
-from SQL_compiler.executor.execution_context import RowContext, ExpressionEvaluator, GroupContext
-from SQL_compiler.parser.ast_nodes import *
+from SQL_compiler.execution.table import Table
+from SQL_compiler.execution.execution_context import RowContext, ExpressionEvaluator, GroupContext
+from SQL_compiler.parsing.ast_nodes import *
 
 
 class QueryExecutor:
@@ -73,7 +73,12 @@ class QueryExecutor:
         first_table_node = from_node.tables[0]
 
         if isinstance(first_table_node, TableBaseNode):
-            current_rows = self._get_table_rows_with_alias(first_table_node)
+            allow_unqualified = len(from_node.tables) == 1
+
+            current_rows = self._get_table_rows_with_alias(
+                first_table_node,
+                allow_unqualified=allow_unqualified,
+            )
 
             if hasattr(first_table_node, "joins") and first_table_node.joins:
                 for join_node in first_table_node.joins:
@@ -86,7 +91,10 @@ class QueryExecutor:
 
         for table_node in from_node.tables[1:]:
             if isinstance(table_node, TableBaseNode):
-                right_rows = self._get_table_rows_with_alias(table_node)
+                right_rows = self._get_table_rows_with_alias(
+                    table_node,
+                    allow_unqualified=False,
+                )
                 current_rows = self._cross_join(current_rows, right_rows)
             elif isinstance(table_node, TableSubqueryNode):
                 right_rows = self._get_subquery_rows(table_node)
@@ -95,10 +103,12 @@ class QueryExecutor:
                 current_rows = self._process_join(current_rows, table_node)
 
         if where_clause and current_rows:
+            self._precompute_subqueries(where_clause)
+
             filtered_rows = []
             for row in current_rows:
                 temp_table = self._create_temp_table(row)
-                context = RowContext(temp_table, row)
+                context = RowContext(temp_table, row, self.tables)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     if bool(evaluator.evaluate(where_clause)):
@@ -109,11 +119,21 @@ class QueryExecutor:
 
         return current_rows if current_rows else []
 
+    def _precompute_subqueries(self, node: AstNode) -> None:
+        """Найти и вычислить все подзапросы в выражении"""
+        if isinstance(node, InSubqueryNode):
+            # Вычислить подзапрос и сохранить результат
+            # (можно использовать тот же кэш)
+            pass
+        else:
+            for child in node.childs:
+                self._precompute_subqueries(child)
     def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
         try:
             sub_executor = QueryExecutor(self.tables)
             rows = sub_executor.execute(table_node.query)
-        except Exception:
+        except Exception as e:
+            print(f"Subquery error: {e}")
             return []
 
         alias = table_node.alias
@@ -124,9 +144,15 @@ class QueryExecutor:
         for row in rows:
             prefixed_row = {}
             for col, val in row.items():
+                # Сохраняем оригинальное имя
                 prefixed_row[col] = val
+                # Добавляем с псевдонимом
                 if alias:
                     prefixed_row[f"{alias}.{col}"] = val
+                # Также добавляем без префикса для удобства
+                if '.' in col:
+                    simple_name = col.split('.')[-1]
+                    prefixed_row[simple_name] = val
             result.append(prefixed_row)
         return result
 
@@ -142,7 +168,12 @@ class QueryExecutor:
                 result.append(self._merge_rows(left_row, right_row))
         return result
 
-    def _get_table_rows_with_alias(self, table_node: TableBaseNode) -> List[Dict[str, Any]]:
+    def _get_table_rows_with_alias(
+            self,
+            table_node: TableBaseNode,
+            allow_unqualified: bool = False,
+    ) -> List[Dict[str, Any]]:
+
         table = self.tables.get(table_node.name)
         if table is None:
             return []
@@ -155,8 +186,10 @@ class QueryExecutor:
             for col, val in row.items():
                 prefixed_row[f"{table.name}.{col}"] = val
                 prefixed_row[f"{alias}.{col}"] = val
-                if col not in prefixed_row:
+
+                if allow_unqualified:
                     prefixed_row[col] = val
+
             rows.append(prefixed_row)
 
         return rows
@@ -183,7 +216,7 @@ class QueryExecutor:
             return True
 
         temp_table = self._create_temp_table(merged)
-        context = RowContext(temp_table, merged)
+        context = RowContext(temp_table, merged, self.tables)
         evaluator = ExpressionEvaluator(context)
         try:
             return bool(evaluator.evaluate(condition))
@@ -199,7 +232,10 @@ class QueryExecutor:
 
     def _process_join(self, left_rows: List[Dict[str, Any]], join_node: JoinNode) -> List[Dict[str, Any]]:
         if isinstance(join_node.table, TableBaseNode):
-            right_rows = self._get_table_rows_with_alias(join_node.table)
+            right_rows = self._get_table_rows_with_alias(
+                join_node.table,
+                allow_unqualified=False,
+            )
             right_null_keys = self._collect_keys(right_rows)
         elif isinstance(join_node.table, TableSubqueryNode):
             right_rows = self._get_subquery_rows(join_node.table)
@@ -291,29 +327,32 @@ class QueryExecutor:
         result_rows = []
         for row in rows:
             temp_table = self._create_temp_table(row)
-            context = RowContext(temp_table, row)
+            context = RowContext(temp_table, row, self.tables)
             selected_row = self._project_row(select_list, context)
             result_rows.append(selected_row)
         return result_rows
 
     def _execute_group_by(
-        self,
-        rows: List[Dict[str, Any]],
-        group_by: List[ExprNode],
-        select_list: List[SelectItemNode],
-        having_clause: Optional[ExprNode],
+            self,
+            rows: List[Dict[str, Any]],
+            group_by: List[ExprNode],
+            select_list: List[SelectItemNode],
+            having_clause: Optional[ExprNode],
     ) -> List[Dict[str, Any]]:
         groups = {}
 
+        # Группировка
         for row in rows:
             temp_table = self._create_temp_table(row)
-            context = RowContext(temp_table, row)
+            context = RowContext(temp_table, row, self.tables)
             evaluator = ExpressionEvaluator(context)
 
             key_parts = []
             for expr in group_by:
                 try:
                     value = evaluator.evaluate(expr)
+                    if isinstance(value, (list, dict)):
+                        value = str(value)
                     key_parts.append(value)
                 except Exception as e:
                     print(f"Ошибка при вычислении GROUP BY: {e}")
@@ -322,46 +361,117 @@ class QueryExecutor:
             key = tuple(key_parts)
             groups.setdefault(key, []).append(row)
 
+        print(f"[DEBUG GROUP] Found {len(groups)} groups")
+
         result_rows = []
 
+        # Обработка групп с HAVING
         for group_key, group_rows in groups.items():
-            group_context = GroupContext(group_rows)
-            evaluator = ExpressionEvaluator(None, group_context)
+            print(f"[DEBUG GROUP] Processing group with key: {group_key}, size: {len(group_rows)}")
 
+            group_context = GroupContext(group_rows)
+
+            # Проверяем HAVING через ExpressionEvaluator
             if having_clause:
+                evaluator = ExpressionEvaluator(group_context=group_context)
                 try:
-                    if not bool(evaluator.evaluate(having_clause)):
+                    # Если having_clause - список, комбинируем условия через AND
+                    if isinstance(having_clause, list):
+                        having_result = True
+                        for clause in having_clause:
+                            clause_result = evaluator.evaluate(clause)
+                            having_result = having_result and bool(clause_result)
+                            if not having_result:
+                                break
+                    else:
+                        having_result = evaluator.evaluate(having_clause)
+
+                    print(f"[DEBUG HAVING] Condition result: {having_result} (type: {type(having_result)})")
+
+                    if not bool(having_result):
+                        print(f"[DEBUG HAVING] Group rejected (condition False)")
                         continue
+                    else:
+                        print(f"[DEBUG HAVING] Group accepted (condition True)")
                 except Exception as e:
                     print(f"Ошибка при вычислении HAVING: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
 
+            # Формируем результат через ExpressionEvaluator
             row_dict = {}
+            evaluator = ExpressionEvaluator(group_context=group_context)
             for item in select_list:
                 if isinstance(item.expr, StarNode):
                     if group_rows:
                         for col, val in group_rows[0].items():
-                            row_dict[col] = val
+                            if '.' in col:
+                                simple_name = col.split('.')[-1]
+                                row_dict[simple_name] = val
+                            else:
+                                row_dict[col] = val
                     continue
 
                 try:
+                    evaluator = ExpressionEvaluator(group_context=group_context)
                     value = evaluator.evaluate(item.expr)
-                    name = item.alias if item.alias else str(item.expr)
+
+                    # ОТЛАДКА: выводим информацию об expression
+                    print(f"[DEBUG NAME] item.expr type: {type(item.expr)}")
+                    print(f"[DEBUG NAME] item.expr: {item.expr}")
+                    print(f"[DEBUG NAME] item.alias: {item.alias}")
+                    if item.alias:
+                        name = item.alias
+                        print(f"[DEBUG NAME] Using alias: {name}")
+                    elif isinstance(item.expr, FuncCallNode):
+                        func_name = item.expr.name
+                        if item.expr.args:
+                            arg_name = self._extract_arg_name(item.expr.args[0])
+                            name = f"{func_name}({arg_name})"
+                        else:
+                            name = f"{func_name}()"
+                        print(f"[DEBUG NAME] Generated function name: {name}")
+                    elif isinstance(item.expr, IdentNode):
+                        name = item.expr.name
+                        print(f"[DEBUG NAME] IdentNode name: {name}")
+                    elif isinstance(item.expr, CompoundIdentNode):
+                        name = item.expr.full_name
+                        print(f"[DEBUG NAME] CompoundIdentNode name: {name}")
+                    else:
+                        name = str(item.expr)
+                        print(f"[DEBUG NAME] Fallback str() name: {name}")
+
                     row_dict[name] = value
+                    print(f"[DEBUG SELECT] {name} = {value}")
                 except Exception as e:
                     print(f"Ошибка при вычислении SELECT: {e}")
+                    import traceback
+                    traceback.print_exc()
                     name = item.alias or str(item.expr)
                     row_dict[name] = None
 
-            for i, expr in enumerate(group_by):
-                col_name = str(expr)
-                if col_name not in row_dict:
-                    row_dict[col_name] = group_key[i] if i < len(group_key) else None
-
             result_rows.append(row_dict)
 
+        print(f"[DEBUG GROUP] Final result rows: {len(result_rows)}")
         return result_rows
 
+    def _extract_arg_name(self, arg) -> str:
+        """Извлечь имя из аргумента функции"""
+        # Если arg - список, берем первый элемент
+        if isinstance(arg, list):
+            if not arg:
+                return "*"
+            arg = arg[0]
+
+        if isinstance(arg, IdentNode):
+            return arg.name
+        elif isinstance(arg, CompoundIdentNode):
+            return arg.full_name
+        elif isinstance(arg, StarNode):
+            return "*"
+        else:
+            return str(arg)
     def _project_row(self, select_list: List[SelectItemNode], context: RowContext) -> Dict[str, Any]:
         result = {}
         evaluator = ExpressionEvaluator(context)
@@ -417,7 +527,7 @@ class QueryExecutor:
         for term in reversed(order_by):
             def key_func(row):
                 temp_table = self._create_temp_table(row)
-                context = RowContext(temp_table, row)
+                context = RowContext(temp_table, row, self.tables)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     value = evaluator.evaluate(term.expr)

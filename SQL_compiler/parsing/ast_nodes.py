@@ -155,7 +155,7 @@ class UnOpNode(ExprNode):
         return self.arg,
 
     def __str__(self) -> str:
-        return str(self.op.value)
+        return f"{self.op.value} {self.arg}"
 
 
 class BinOp(Enum):
@@ -196,8 +196,7 @@ class BinOpNode(ExprNode):
         return self.arg1, self.arg2
 
     def __str__(self) -> str:
-        return str(self.op.value)
-
+        return f"{self.arg1} {self.op.value} {self.arg2}"
 
 class BetweenNode(ExprNode):
     def __init__(self, expr: ExprNode, low: ExprNode, high: ExprNode, negated: bool = False):
@@ -212,7 +211,8 @@ class BetweenNode(ExprNode):
         return self.expr, self.low, self.high
 
     def __str__(self) -> str:
-        return "NOT BETWEEN" if self.negated else "BETWEEN"
+        op = "NOT BETWEEN" if self.negated else "BETWEEN"
+        return f"{self.expr} {op} {self.low} AND {self.high}"
 
 
 class InNode(ExprNode):
@@ -227,7 +227,9 @@ class InNode(ExprNode):
         return (self.expr,) + tuple(self.elements)
 
     def __str__(self) -> str:
-        return "NOT IN" if self.negated else "IN"
+        op = "NOT IN" if self.negated else "IN"
+        elems = ", ".join(str(e) for e in self.elements)
+        return f"{self.expr} {op} ({elems})"
 
 
 class IsNullNode(ExprNode):
@@ -241,7 +243,7 @@ class IsNullNode(ExprNode):
         return self.expr,
 
     def __str__(self) -> str:
-        return "IS NOT NULL" if self.negated else "IS NULL"
+        return f"{self.expr} IS {'NOT ' if self.negated else ''}NULL"
 
 
 class SubQueryNode(ExprNode):

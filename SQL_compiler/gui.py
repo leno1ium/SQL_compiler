@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QMessageBox, QToolBar, QLabel, QHeaderView, QAbstractItemView, QTabBar, QToolButton, QSizePolicy
 )
 
-from SQL_compiler.executor.executor import QueryExecutor
-from SQL_compiler.executor.table import Table
-from SQL_compiler.parser.parser import parse
+from SQL_compiler.execution.executor import QueryExecutor
+from SQL_compiler.execution.table import Table
+from SQL_compiler.parsing.parser import parse
 
 
 class CustomTabBar(QTabBar):
@@ -439,7 +439,6 @@ class ModernTableWidget(QTableWidget):
                 item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self.setItem(i, j, item)
 
-        # Применяем растягивание колонок
         if stretch:
             header = self.horizontalHeader()
             for j in range(len(df.columns)):
@@ -484,7 +483,7 @@ class DatabaseViewer(QMainWindow):
 
     def init_ui(self):
         """Инициализация пользовательского интерфейса"""
-        self.setWindowTitle("Modern SQL Query Tool")
+        self.setWindowTitle("SQL Query Tool")
         self.setGeometry(100, 100, 1400, 900)
 
         # Создание центрального виджета
