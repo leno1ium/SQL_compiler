@@ -14,7 +14,7 @@ class RowContext:
     def get_value(self, column_name: str) -> Any:
         # Прямое совпадение
         if column_name in self.row:
-            return self.row[column_name]
+            return self.row[column_name]  # Здесь может быть None
 
         # Составное имя (таблица.колонка)
         if "." in column_name and column_name in self.row:
@@ -28,16 +28,19 @@ class RowContext:
             return self.row[base_name]
 
         # Поиск среди ключей, заканчивающихся на .base_name
-        matches = [self.row[key] for key in self.row.keys()
+        matches = [(key, val) for key, val in self.row.items()
                    if key.endswith(f".{base_name}")]
 
         if len(matches) == 1:
-            return matches[0]
+            return matches[0][1]  # Возвращаем значение (может быть None)
         elif len(matches) > 1:
+            # Ищем точное совпадение с именем таблицы
+            for key, val in matches:
+                if key.startswith(f"{base_name}.") or key.endswith(f".{base_name}"):
+                    return val
             raise Exception(f'Column "{column_name}" is ambiguous')
 
         raise KeyError(f"Column '{column_name}' not found in row with keys: {list(self.row.keys())}")
-
     def get_type(self, column_name: str) -> type:
         return self.table.get_column_type(column_name)
 

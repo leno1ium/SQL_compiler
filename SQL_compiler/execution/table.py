@@ -96,8 +96,21 @@ class Table:
 
 
 class ExcelLoader:
+
+    NULL_VALUES = {None, "", "\\N", "NULL", "null", "None"}
+
     def __init__(self):
         self.tables: Dict[str, Table] = {}
+
+    def _is_null_value(self, value: Any) -> bool:
+        """Проверить, является ли значение NULL"""
+        if value is None:
+            return True
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped in self.NULL_VALUES or stripped == "":
+                return True
+        return False
 
     def load(self, filepath: Union[str, Path]) -> Dict[str, Table]:
         filepath = Path(filepath)
@@ -167,7 +180,8 @@ class ExcelLoader:
         if not values:
             return str
 
-        non_null = [v for v in values if v is not None]
+        # Используем _is_null_value для фильтрации
+        non_null = [v for v in values if not self._is_null_value(v)]
         if not non_null:
             return str
 
@@ -191,7 +205,7 @@ class ExcelLoader:
                     pass
                 elif isinstance(v, str):
                     try:
-                        float(v)
+                        float(v.strip())
                     except ValueError:
                         all_float = False
                 else:
@@ -201,6 +215,9 @@ class ExcelLoader:
                 if isinstance(v, datetime):
                     pass
                 elif isinstance(v, str):
+                    v_clean = v.strip()
+                    if self._is_null_value(v_clean):
+                        continue
                     date_formats = [
                         "%Y-%m-%d",
                         "%d.%m.%Y",
@@ -209,13 +226,15 @@ class ExcelLoader:
                         "%Y%m%d",
                         "%d.%m.%y",
                     ]
+                    found = False
                     for fmt in date_formats:
                         try:
-                            datetime.strptime(v, fmt)
+                            datetime.strptime(v_clean, fmt)
+                            found = True
                             break
                         except ValueError:
                             continue
-                    else:
+                    if not found:
                         all_date = False
                 else:
                     all_date = False
@@ -229,7 +248,8 @@ class ExcelLoader:
         return str
 
     def _convert_value(self, value: Any, target_type: type) -> Any:
-        if value is None:
+        # Используем _is_null_value для проверки
+        if self._is_null_value(value):
             return None
 
         try:
@@ -237,16 +257,21 @@ class ExcelLoader:
                 if isinstance(value, float) and value.is_integer():
                     return int(value)
                 if isinstance(value, str):
-                    return int(value.strip())
+                    cleaned = value.strip()
+                    return int(cleaned)
                 return int(value)
 
             elif target_type == float:
+                if isinstance(value, str):
+                    cleaned = value.strip()
+                    return float(cleaned)
                 return float(value)
 
             elif target_type == datetime:
                 if isinstance(value, datetime):
                     return value
                 if isinstance(value, str):
+                    cleaned = value.strip()
                     date_formats = [
                         "%Y-%m-%d",
                         "%d.%m.%Y",
@@ -257,13 +282,13 @@ class ExcelLoader:
                     ]
                     for fmt in date_formats:
                         try:
-                            return datetime.strptime(value, fmt)
+                            return datetime.strptime(cleaned, fmt)
                         except ValueError:
                             continue
                 return None
 
-            else:
-                return str(value).strip()
+            else:  # str
+                return str(value).strip() if value is not None else None
 
         except (ValueError, TypeError):
             return None

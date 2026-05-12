@@ -446,24 +446,39 @@ class ModernTableWidget(QTableWidget):
         else:
             self.resizeColumnsToContents()
 
+
 class ModernSQLTextEdit(QTextEdit):
     """Редактор SQL с подсветкой синтаксиса"""
 
     def __init__(self):
         super().__init__()
-        self.setFont(QFont("Consolas", 11))
+        self.default_font = QFont("Consolas", 11)
+        self.setFont(self.default_font)
         self.setStyleSheet("""
-            QTextEdit {
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-                border: none;
-                border-radius: 8px;
-                padding: 10px;
-                selection-background-color: #264F78;
-            }
-        """)
+                    QTextEdit {
+                        background-color: #1E1E1E;
+                        color: #D4D4D4;
+                        border: none;
+                        border-radius: 8px;
+                        padding: 10px;
+                        selection-background-color: #264F78;
+                        font-family: Consolas, Monaco, monospace;
+                        font-size: 11pt;
+                    }
+                """)
         self.highlighter = SQLSyntaxHighlighter(self.document())
         self.setTabStopDistance(40)
+        self.setAcceptRichText(False)
+
+    def insertFromMimeData(self, source):
+        """Переопределяем вставку для очистки форматирования"""
+        if source.hasText():
+            # Вставляем только обычный текст без форматирования
+            self.insertPlainText(source.text())
+
+    def canInsertFromMimeData(self, source):
+        """Разрешаем вставку текста"""
+        return source.hasText()
 
 
 class DatabaseViewer(QMainWindow):
@@ -904,54 +919,7 @@ class DatabaseViewer(QMainWindow):
 
     def execute_query(self):
         """Выполнение SQL запроса"""
-        current_tab = self.query_tabs.currentWidget()
-        if not current_tab:
-            return
-
-        query_editor = current_tab.findChild(QTextEdit)
-        if not query_editor:
-            return
-
-        query = query_editor.toPlainText().strip()
-
-        if not query:
-            QMessageBox.warning(self, "Warning", "Query is empty")
-            return
-
-        if not self.db_tables:
-            QMessageBox.warning(self, "Warning", "No database loaded")
-            return
-
-        if not self.query_executor:
-            QMessageBox.warning(self, "Warning", "Query executor not initialized")
-            return
-
-        try:
-            # Приводим идентификаторы к нижнему регистру
-            normalized_query = self._normalize_query(query)
-
-            # Парсим нормализованный SQL запрос
-            ast = parse(normalized_query)
-
-            # Выполняем запрос через QueryExecutor
-            result_rows = self.query_executor.execute(ast)
-
-            if result_rows:
-                # Конвертируем результат в DataFrame для отображения
-                result_df = pd.DataFrame(result_rows)
-                self.results_table.setDataFrame(result_df, stretch=True)  # Добавлен stretch=True
-
-                # Обновляем информацию о строках
-                displayed_rows = len(result_df)
-                self.rows_info_label.setText(f"Rows: {displayed_rows}")
-            else:
-                self.results_table.setRowCount(0)
-                self.results_table.setColumnCount(0)
-                self.rows_info_label.setText("Rows: 0")
-                QMessageBox.information(self, "Info", "Query executed successfully (no results)")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
+        self.execute_current_query()
 
     def _normalize_query(self, query: str) -> str:
         """Приведение всех идентификаторов в SQL запросе к нижнему регистру"""
@@ -1010,7 +978,60 @@ class DatabaseViewer(QMainWindow):
         elif item.parent() and item.parent().text(0) == "Database":
             # Это таблица
             table_name = item.text(0)
-            self.show_table_contents(table_name)
+            # Создаем новую вкладку с запросом SELECT * FROM table
+            self.create_and_execute_select_all(table_name)
+
+    def create_and_execute_select_all(self, table_name):
+        """Создать новую вкладку с SELECT * FROM table и выполнить его"""
+        # Создаем новую вкладку
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        query_editor = ModernSQLTextEdit()
+        query = f"SELECT * FROM {table_name};"
+        query_editor.setText(query)
+        query_editor.setPlaceholderText("Enter your SQL query here...")
+
+        tab_layout.addWidget(query_editor)
+
+        # Создаем вкладку с именем таблицы
+        tab_name = table_name
+        self.query_tabs.addTab(tab_widget, tab_name)
+        self.query_tabs.setCurrentWidget(tab_widget)
+        self.query_tabs.update_add_button_position()
+
+        # Выполняем запрос автоматически
+        self.execute_query_from_editor(query_editor, tab_name)
+
+    def execute_query_from_editor(self, query_editor, tab_name):
+        """Выполнить запрос из указанного редактора"""
+        if not self.db_tables:
+            QMessageBox.warning(self, "Warning", "No database loaded")
+            return
+
+        if not self.query_executor:
+            QMessageBox.warning(self, "Warning", "Query executor not initialized")
+            return
+
+        query = query_editor.toPlainText().strip()
+
+        try:
+            normalized_query = self._normalize_query(query)
+            ast = parse(normalized_query)
+            result_rows = self.query_executor.execute(ast)
+
+            if result_rows:
+                result_df = pd.DataFrame(result_rows)
+                self.results_table.setDataFrame(result_df, stretch=True)
+                self.rows_info_label.setText(f"Rows: {len(result_df)} | Query: {tab_name}")
+            else:
+                self.results_table.setRowCount(0)
+                self.results_table.setColumnCount(0)
+                self.rows_info_label.setText(f"Rows: 0 | Query: {tab_name}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
 
     def show_table_contents(self, table_name):
         """Показать содержимое таблицы (без дубликатов вкладок)"""
@@ -1091,7 +1112,7 @@ class DatabaseViewer(QMainWindow):
             self.table_tabs.setVisible(False)
 
     def load_script(self):
-        """Загрузка SQL скрипта из файла"""
+        """Загрузка SQL скрипта из файла и автоматическое выполнение"""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Load SQL Script", "", "SQL Files (*.sql);;Text Files (*.txt);;All Files (*)"
         )
@@ -1106,9 +1127,53 @@ class DatabaseViewer(QMainWindow):
                     query_editor = current_tab.findChild(QTextEdit)
                     if query_editor:
                         query_editor.setText(content)
+                        # Автоматически выполняем загруженный скрипт
+                        self.execute_current_query()
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load script: {str(e)}")
+
+    def execute_current_query(self):
+        """Выполнить запрос из текущей вкладки"""
+        current_tab = self.query_tabs.currentWidget()
+        if not current_tab:
+            return
+
+        query_editor = current_tab.findChild(QTextEdit)
+        if not query_editor:
+            return
+
+        query = query_editor.toPlainText().strip()
+
+        if not query:
+            QMessageBox.warning(self, "Warning", "Query is empty")
+            return
+
+        if not self.db_tables:
+            QMessageBox.warning(self, "Warning", "No database loaded")
+            return
+
+        if not self.query_executor:
+            QMessageBox.warning(self, "Warning", "Query executor not initialized")
+            return
+
+        try:
+            normalized_query = self._normalize_query(query)
+            ast = parse(normalized_query)
+            result_rows = self.query_executor.execute(ast)
+
+            if result_rows:
+                result_df = pd.DataFrame(result_rows)
+                self.results_table.setDataFrame(result_df, stretch=True)
+                tab_name = self.query_tabs.tabText(self.query_tabs.currentIndex())
+                self.rows_info_label.setText(f"Rows: {len(result_df)} | Query: {tab_name}")
+            else:
+                self.results_table.setRowCount(0)
+                self.results_table.setColumnCount(0)
+                self.rows_info_label.setText("Rows: 0")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
 
     def save_query_to_file(self):
         """Сохранение запроса в файл"""
