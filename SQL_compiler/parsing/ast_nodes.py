@@ -556,3 +556,37 @@ class DistinctArgsNode(AstNode):
 
     def __str__(self):
         return "DISTINCT"
+
+
+class ConcatNode(ExprNode):
+    """Узел для конкатенации строк (||)"""
+
+    def __init__(self, left: ExprNode, right: ExprNode):
+        super().__init__()
+        self.left = left
+        self.right = right
+        self._childs = (left, right)  # Используем защищенное поле
+
+    @property
+    def childs(self) -> tuple:
+        return self._childs
+
+    @childs.setter
+    def childs(self, value):
+        self._childs = value
+
+    def __str__(self) -> str:
+        return f"{self.left} || {self.right}"
+
+class UnionNode(StmtNode):
+    """Узел для UNION операций"""
+    def __init__(self, left: SelectStmtNode, right: SelectStmtNode, all: bool = False):
+        super().__init__()
+        self.left = left
+        self.right = right
+        self.all = all
+        self.childs = (left, right)
+
+    def __str__(self) -> str:
+        all_str = " ALL" if self.all else ""
+        return f"UNION{all_str}"

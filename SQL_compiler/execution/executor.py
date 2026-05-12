@@ -329,6 +329,8 @@ class QueryExecutor:
         return table
 
     def _execute_select(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> List[Dict[str, Any]]:
+        print(f"[DEBUG] select_list: {select_list}")
+        print(f"[DEBUG] select_list types: {[type(item) for item in select_list]}")
         result_rows = []
         for row in rows:
             temp_table = self._create_temp_table(row)

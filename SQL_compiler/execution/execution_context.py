@@ -93,75 +93,20 @@ class GroupContext:
 
     def get_aggregate(self, func_name: str, column: Optional[str] = None, distinct: bool = False) -> Any:
         """Вычисление агрегатной функции для группы"""
-        print(f"[DEBUG AGG] RAW column: {column} (type: {type(column)})")
-        if column is not None and not isinstance(column, str):
-            print(f"[DEBUG AGG] Converting column from {type(column)} to str")
-            if hasattr(column, 'name'):
-                column = column.name
-                print(f"[DEBUG AGG] Used column.name: '{column}'")
-            elif hasattr(column, 'full_name'):
-                column = column.full_name
-                print(f"[DEBUG AGG] Used column.full_name: '{column}'")
-            else:
-                column = str(column)
-                print(f"[DEBUG AGG] Used str(column): '{column}'")
+        from SQL_compiler.execution.function_manager import FunctionManager
 
-        print(f"[DEBUG AGG] Getting aggregate: {func_name}({column}) for group of size {len(self.rows)}")
-        func_name = func_name.upper()
-
-        print(f"[DEBUG AGG] Getting aggregate: {func_name}({column}) for group of size {len(self.rows)}")
-
-        if column is not None and not isinstance(column, str):
-            if hasattr(column, 'name'):
-                column = column.name
-            elif hasattr(column, 'full_name'):
-                column = column.full_name
-            else:
-                column = str(column)
-        if func_name == "COUNT":
-            if column is None:  # COUNT(*)
-                result = len(self.rows)
-                print(f"[DEBUG AGG] COUNT(*) = {result}")
-                return result
-
-            # COUNT(column) - считаем не-NULL значения
-            count = 0
-            for row in self.rows:
-                val = self._lookup_value(row, column)
-                print(f"[DEBUG AGG] Row value for {column}: {val}")
-                if val is not None:
-                    count += 1
-            print(f"[DEBUG AGG] COUNT({column}) = {count}")
-            return count
-
-        # Для других агрегатных функций
+        # Собираем значения колонки
         values = []
         for row in self.rows:
-            val = self._lookup_value(row, column) if column else None
-            print(f"[DEBUG AGG] Row value for {column}: {val}")
-            if val is not None:
+            if column:
+                val = self._lookup_value(row, column)
                 values.append(val)
+            else:
+                # COUNT(*) - добавляем 1 для каждой строки
+                values.append(1)
 
-        print(f"[DEBUG AGG] Values for {func_name}({column}): {values}")
-
-        if not values:
-            if func_name in ("SUM", "AVG"):
-                return 0
-            return None
-
-        if func_name == "SUM":
-            result = sum(values)
-        elif func_name == "AVG":
-            result = sum(values) / len(values)
-        elif func_name == "MIN":
-            result = min(values)
-        elif func_name == "MAX":
-            result = max(values)
-        else:
-            result = None
-
-        print(f"[DEBUG AGG] Result = {result}")
-        return result
+        # Используем FunctionManager для вычисления
+        return FunctionManager.call_aggregate(func_name, values, distinct)
 
 
 class ExpressionEvaluator:
@@ -174,6 +119,9 @@ class ExpressionEvaluator:
 
     def evaluate(self, node: AstNode) -> Any:
         """Основной метод оценки выражения"""
+        if isinstance(node, list):
+            return [self.evaluate(item) for item in node if item is not None]
+
         if isinstance(node, NumNode):
             return node.num
         elif isinstance(node, StringNode):
@@ -202,6 +150,45 @@ class ExpressionEvaluator:
             return self._evaluate_function(node)
         elif isinstance(node, StarNode):
             raise ValueError("StarNode can only be used in SELECT list")
+        elif isinstance(node, ConcatNode):
+            left = self.evaluate(node.left)
+            right = self.evaluate(node.right)
+            if left is None and right is None:
+                return None
+            left_str = str(left) if left is not None else ''
+            right_str = str(right) if right is not None else ''
+            return left_str + right_str
+
+        elif isinstance(node, ExistsNode):
+            from SQL_compiler.execution.executor import QueryExecutor
+            tables = {}
+            if self.row_context and hasattr(self.row_context, 'tables'):
+                tables = self.row_context.tables
+            executor = QueryExecutor(tables)
+            result = executor.execute(node.subquery)
+            exists = len(result) > 0
+            return not exists if node.negated else exists
+
+        elif isinstance(node, UnionNode):
+            from SQL_compiler.execution.executor import QueryExecutor
+            tables = {}
+            if self.row_context and hasattr(self.row_context, 'tables'):
+                tables = self.row_context.tables
+            executor = QueryExecutor(tables)
+            left_result = executor.execute(node.left)
+            right_result = executor.execute(node.right)
+
+            if node.all:
+                return left_result + right_result
+            else:
+                seen = set()
+                result = []
+                for row in left_result + right_result:
+                    row_tuple = tuple(sorted(row.items()))
+                    if row_tuple not in seen:
+                        seen.add(row_tuple)
+                        result.append(row)
+                return result
         else:
             raise ValueError(f"Unknown node type: {type(node)}")
 
@@ -371,42 +358,33 @@ class ExpressionEvaluator:
         return str(value)
 
     def _evaluate_function(self, node: FuncCallNode) -> Any:
-        """Обработка функций"""
-        if self.group_context:
-            # Для агрегатных функций в GROUP BY и HAVING
-            if node.name == 'COUNT':
-                if not node.args or (len(node.args) == 1 and isinstance(node.args[0], StarNode)):
-                    return len(self.group_context.rows)
-                else:
-                    column = self._get_column_from_expr(node.args[0])
-                    print(f"[DEBUG] COUNT column from _get_column_from_expr: {column} (type: {type(column)})")
-                    return self.group_context.get_aggregate('COUNT', column)
-            elif node.name == 'SUM':
-                column = self._get_column_from_expr(node.args[0])
-                return self.group_context.get_aggregate('SUM', column)
-            elif node.name == 'AVG':
-                column = self._get_column_from_expr(node.args[0])
-                return self.group_context.get_aggregate('AVG', column)
-            elif node.name == 'MIN':
-                column = self._get_column_from_expr(node.args[0])
-                return self.group_context.get_aggregate('MIN', column)
-            elif node.name == 'MAX':
-                column = self._get_column_from_expr(node.args[0])
-                return self.group_context.get_aggregate('MAX', column)
+        """Обработка функций с использованием FunctionManager"""
+        from SQL_compiler.execution.function_manager import FunctionManager
+
+        # Для группового контекста - агрегатные функции
+        if self.group_context and FunctionManager.is_aggregate(node.name):
+            if node.name.upper() == 'COUNT' and (
+                    not node.args or (len(node.args) == 1 and isinstance(node.args[0], StarNode))):
+                return len(self.group_context.rows)
             else:
-                return None
-        else:
-            # Скалярные функции
-            if node.name == 'UPPER' and node.args:
-                val = self.evaluate(node.args[0])
-                return val.upper() if isinstance(val, str) else val
-            elif node.name == 'LOWER' and node.args:
-                val = self.evaluate(node.args[0])
-                return val.lower() if isinstance(val, str) else val
-            elif node.name == 'COUNT' and not node.args:
-                return 1
-            else:
-                return None
+                column = self._get_column_from_expr(node.args[0]) if node.args else None
+                return self.group_context.get_aggregate(node.name, column, node.distinct)
+
+        # Для обычных функций - вычисляем аргументы
+        args = []
+        for arg in node.args:
+            if isinstance(arg, StarNode):
+                continue
+            evaluated = self.evaluate(arg)
+            args.append(evaluated)
+
+        print(f"[DEBUG] Calling function {node.name} with args: {args}")
+
+        try:
+            return FunctionManager.call(node.name, *args)
+        except ValueError as e:
+            print(f"Warning: {e}")
+            return None
 
     def _get_column_from_expr(self, expr: ExprNode) -> str:
         """Извлечь имя колонки из выражения"""

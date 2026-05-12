@@ -249,10 +249,15 @@ class SQLASTBuilder(Transformer):
         raise ValueError(f"Unknown NOT tail kind: {kind}")
 
     def expr_list(self, args):
+        """Обработка списка выражений"""
         result = []
         for arg in args:
-            if isinstance(arg, AstNode):
+            if isinstance(arg, list):
+                result.extend(arg)
+            elif isinstance(arg, AstNode):
                 result.append(arg)
+            # Игнорируем Token (запятые)
+        print(f"[DEBUG] expr_list: {result}")
         return result
 
     def exists_subquery(self, args):
@@ -272,30 +277,43 @@ class SQLASTBuilder(Transformer):
         return items
 
     def function_call(self, items):
-        filtered = [x for x in items if not isinstance(x, Token)]
-        if not items:
-            return FuncCallNode("", [])
+        """Обработка вызова функции"""
+        print(f"[DEBUG] function_call items: {items}")
 
-        func_name = str(items[0]).upper()
+        func_name = None
+        args = []
 
-        if not filtered:
-            return FuncCallNode(func_name, [])
+        for i, item in enumerate(items):
+            if isinstance(item, Token) and func_name is None:
+                func_name = str(item).upper()
+            elif isinstance(item, list):
+                # РАЗВОРАЧИВАЕМ ВЛОЖЕННЫЕ СПИСКИ
+                def extract_args(lst):
+                    result = []
+                    for x in lst:
+                        if isinstance(x, list):
+                            result.extend(extract_args(x))
+                        elif isinstance(x, AstNode):
+                            result.append(x)
+                    return result
 
-        arg = filtered[0]
+                args = extract_args(item)
+            elif isinstance(item, AstNode):
+                args.append(item)
 
-        if isinstance(arg, StarNode):
-            return FuncCallNode(func_name, [arg], distinct=False)
+        if func_name is None:
+            func_name = "UNKNOWN"
 
-        if isinstance(arg, DistinctArgsNode):
-            return FuncCallNode(func_name, arg.args, distinct=True)
+        distinct = False
+        for i, arg in enumerate(args):
+            if isinstance(arg, DistinctArgsNode):
+                distinct = True
+                args = arg.args
+                break
 
-        if isinstance(arg, list):
-            return FuncCallNode(func_name, arg, distinct=False)
+        print(f"[DEBUG] function_call: name={func_name}, args={args}, distinct={distinct}")
 
-        if isinstance(arg, AstNode):
-            return FuncCallNode(func_name, [arg], distinct=False)
-
-        return FuncCallNode(func_name, [])
+        return FuncCallNode(func_name, args, distinct=distinct)
 
     def select_item(self, args):
         filtered = [a for a in args if not isinstance(a, Token)]
@@ -370,6 +388,32 @@ class SQLASTBuilder(Transformer):
                 tables.append(arg)
         return FromNode(tables)
 
+    def concat_expr(self, args):
+        """Обработка конкатенации строк ||"""
+        nodes = [a for a in args if isinstance(a, AstNode)]
+        if len(nodes) >= 2:
+            # Левоассоциативная конкатенация
+            left = nodes[-2]
+            right = nodes[-1]
+            return ConcatNode(left, right)
+        return nodes[0] if nodes else None
+
+    def union(self, args):
+        """Обработка UNION"""
+        left = None
+        right = None
+        all_flag = False
+
+        for arg in args:
+            if isinstance(arg, SelectStmtNode):
+                if left is None:
+                    left = arg
+                else:
+                    right = arg
+            elif isinstance(arg, Token) and str(arg).upper() == "ALL":
+                all_flag = True
+
+        return UnionNode(left, right, all_flag) if left and right else left or right
     def join_clause(self, args):
         filtered = [a for a in args if not isinstance(a, Token)]
 
@@ -562,6 +606,7 @@ class SQLASTBuilder(Transformer):
         return 1
 
     def __default__(self, data, children, meta):
+        print(f"[DEBUG] __default__: data={data}, children={children}")
         nodes = [c for c in children if isinstance(c, AstNode)]
 
         if len(nodes) == 1:

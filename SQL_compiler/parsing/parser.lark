@@ -43,6 +43,9 @@ LIMIT: "limit"i
 OFFSET: "offset"i
 BETWEEN: "between"i
 EXISTS: "exists"i
+UNION: "union"i
+ALL: "all"i
+CONCAT: "||"
 
 IDENT: LETTER (LETTER | DIGIT | "_")*
 STAR: "*"
@@ -121,7 +124,9 @@ expr_args: expr_list
              | in_expr BETWEEN in_expr AND in_expr -> between
              | in_expr NOT not_between_like_tail -> not_between_like
 
-?and_expr: between_expr (AND between_expr)*
+?and_expr: concat_expr (AND concat_expr)*
+?concat_expr: between_expr
+            | concat_expr CONCAT concat_expr -> concat_expr
 
 ?or_expr: and_expr (OR and_expr)*
 
@@ -139,7 +144,9 @@ select_stmt: SELECT distinct? select_list \
              (GROUP BY expr_list (HAVING expr)?)? \
              (ORDER BY ordering_term (COMMA ordering_term)*)? \
              (LIMIT expr (OFFSET expr)?)? \
+             (UNION (ALL)? select_stmt)? \
              SEMICOLON? -> select_stmt
+
 
 where_clause: WHERE expr -> where_clause
 where_expr: expr -> where_expr
