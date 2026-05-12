@@ -167,6 +167,7 @@ class GroupContext:
 class ExpressionEvaluator:
     _subquery_cache = {}
     _cache_enabled = True
+
     def __init__(self, row_context: Optional[RowContext] = None, group_context: Optional[GroupContext] = None):
         self.row_context = row_context
         self.group_context = group_context
@@ -217,6 +218,7 @@ class ExpressionEvaluator:
             return None
         else:
             raise ValueError(f"No context available for column {column_name}")
+
     def _get_cache_key(self, subquery: SelectStmtNode, context_tables: Dict[str, Table]) -> str:
         """Создать ключ кэша для подзапроса"""
         # Используем строковое представление запроса и список таблиц

@@ -63,9 +63,9 @@ class QueryExecutor:
         return result
 
     def _execute_from_and_joins(
-        self,
-        from_node: FromNode,
-        where_clause: Optional[AstNode],
+            self,
+            from_node: FromNode,
+            where_clause: Optional[AstNode],
     ) -> List[Dict[str, Any]]:
         if not from_node.tables:
             return []
@@ -128,6 +128,7 @@ class QueryExecutor:
         else:
             for child in node.childs:
                 self._precompute_subqueries(child)
+
     def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
         try:
             sub_executor = QueryExecutor(self.tables)
@@ -173,7 +174,6 @@ class QueryExecutor:
             table_node: TableBaseNode,
             allow_unqualified: bool = False,
     ) -> List[Dict[str, Any]]:
-
         table = self.tables.get(table_node.name)
         if table is None:
             return []
@@ -184,9 +184,14 @@ class QueryExecutor:
         for row in table.rows:
             prefixed_row = {}
             for col, val in row.items():
-                prefixed_row[f"{table.name}.{col}"] = val
+                # Всегда добавляем с алиасом (или именем таблицы, если алиаса нет)
                 prefixed_row[f"{alias}.{col}"] = val
 
+                # Если алиас отличается от имени таблицы, добавляем также с именем таблицы
+                if alias != table.name:
+                    prefixed_row[f"{table.name}.{col}"] = val
+
+                # Если разрешены неполные имена
                 if allow_unqualified:
                     prefixed_row[col] = val
 
@@ -278,12 +283,12 @@ class QueryExecutor:
         )
 
     def _process_join_with_type(
-        self,
-        left_rows: List[Dict[str, Any]],
-        right_rows: List[Dict[str, Any]],
-        condition: Optional[AstNode],
-        join_type: str,
-        right_null_keys: List[str],
+            self,
+            left_rows: List[Dict[str, Any]],
+            right_rows: List[Dict[str, Any]],
+            condition: Optional[AstNode],
+            join_type: str,
+            right_null_keys: List[str],
     ) -> List[Dict[str, Any]]:
         if not left_rows:
             return []
@@ -405,12 +410,14 @@ class QueryExecutor:
             for item in select_list:
                 if isinstance(item.expr, StarNode):
                     if group_rows:
+                        seen_columns = set()
                         for col, val in group_rows[0].items():
-                            if '.' in col:
-                                simple_name = col.split('.')[-1]
+                            # Берем только простое имя колонки (без префикса)
+                            simple_name = col.split('.')[-1]
+                            # Добавляем только если еще не добавляли
+                            if simple_name not in seen_columns:
                                 row_dict[simple_name] = val
-                            else:
-                                row_dict[col] = val
+                                seen_columns.add(simple_name)
                     continue
 
                 try:
@@ -472,15 +479,19 @@ class QueryExecutor:
             return "*"
         else:
             return str(arg)
+
     def _project_row(self, select_list: List[SelectItemNode], context: RowContext) -> Dict[str, Any]:
         result = {}
         evaluator = ExpressionEvaluator(context)
 
         for item in select_list:
             if isinstance(item.expr, StarNode):
+                seen_columns = set()
                 for col in context.table.column_names:
-                    if col not in result:
-                        result[col] = context.get_value(col)
+                    simple_name = col.split('.')[-1]
+                    if simple_name not in seen_columns:
+                        result[simple_name] = context.get_value(col)
+                        seen_columns.add(simple_name)
                 continue
 
             try:
@@ -541,9 +552,9 @@ class QueryExecutor:
         return sorted_rows
 
     def _apply_limit_offset(
-        self,
-        rows: List[Dict[str, Any]],
-        limit_offset: LimitOffsetNode,
+            self,
+            rows: List[Dict[str, Any]],
+            limit_offset: LimitOffsetNode,
     ) -> List[Dict[str, Any]]:
         evaluator = ExpressionEvaluator(None)
 
