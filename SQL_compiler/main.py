@@ -3,9 +3,9 @@ from datetime import datetime
 
 import openpyxl
 
-from SQL_compiler.executor.table import ExcelLoader
-from SQL_compiler.executor.executor import QueryExecutor
-from SQL_compiler.parser.parser import parse
+from SQL_compiler.execution.table import ExcelLoader
+from SQL_compiler.execution.executor import QueryExecutor
+from SQL_compiler.parsing.parser import parse
 
 
 def load_excel_file() -> Path:

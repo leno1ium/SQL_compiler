@@ -77,6 +77,7 @@ star_args: STAR
 distinct_args: DISTINCT expr_list
 expr_args: expr_list
 
+// Базовые атомарные выражения
 ?atom: num
      | string
      | bool
@@ -85,12 +86,15 @@ expr_args: expr_list
      | function_call
      | LPAREN expr RPAREN
      | EXISTS LPAREN select_stmt RPAREN -> exists_subquery
+     | LPAREN select_stmt RPAREN -> scalar_subquery
 
+// Унарные выражения
 ?unary_expr: atom
            | PLUS unary_expr -> plus
            | MINUS unary_expr -> minus
            | NOT unary_expr -> not_expr
 
+// Математические операции
 ?mul_expr: unary_expr
          | mul_expr STAR unary_expr -> mul
          | mul_expr "/" unary_expr -> div
@@ -100,6 +104,7 @@ expr_args: expr_list
          | add_expr "+" mul_expr -> add
          | add_expr "-" mul_expr -> sub
 
+// Сравнения
 ?compare_expr: add_expr
              | add_expr ">" add_expr -> gt
              | add_expr ">=" add_expr -> ge
@@ -109,35 +114,39 @@ expr_args: expr_list
              | add_expr "!=" add_expr -> ne
              | add_expr "<>" add_expr -> ne
 
+// LIKE оператор
 ?like_expr: compare_expr
           | compare_expr LIKE compare_expr -> like
 
+// IS NULL оператор
 ?is_expr: like_expr
         | like_expr IS NULL -> is_null
         | like_expr IS NOT NULL -> is_not_null
 
+// IN оператор - исправлен для избежания конфликтов
 ?in_expr: is_expr
-        | is_expr IN LPAREN expr_list RPAREN -> in_expr
-        | is_expr IN LPAREN select_stmt RPAREN -> in_subquery
+        | is_expr NOT? IN LPAREN in_elements RPAREN -> in_expression
 
+// Разделяем элементы для IN
+in_elements: expr_list -> in_value_list
+           | select_stmt -> in_subquery_stmt
+
+// BETWEEN оператор
 ?between_expr: in_expr
-             | in_expr BETWEEN in_expr AND in_expr -> between
-             | in_expr NOT not_between_like_tail -> not_between_like
+             | in_expr NOT? BETWEEN in_expr AND in_expr -> between_expression
 
-?and_expr: concat_expr (AND concat_expr)*
+// Конкатенация строк
 ?concat_expr: between_expr
             | concat_expr CONCAT concat_expr -> concat_expr
 
+// AND/OR операции
+?and_expr: concat_expr (AND concat_expr)*
 ?or_expr: and_expr (OR and_expr)*
 
 expr: or_expr
 expr_list: expr (COMMA expr)*
 
-?not_between_like_tail: BETWEEN in_expr AND in_expr -> not_between_tail
-                       | LIKE compare_expr -> not_like_tail
-                       | IN LPAREN expr_list RPAREN -> not_in_tail
-                       | IN LPAREN select_stmt RPAREN -> not_in_subquery
-
+// SELECT запрос
 select_stmt: SELECT distinct? select_list \
              (FROM table_refs)? \
              (WHERE expr)? \
@@ -146,7 +155,6 @@ select_stmt: SELECT distinct? select_list \
              (LIMIT expr (OFFSET expr)?)? \
              (UNION (ALL)? select_stmt)? \
              SEMICOLON? -> select_stmt
-
 
 where_clause: WHERE expr -> where_clause
 where_expr: expr -> where_expr

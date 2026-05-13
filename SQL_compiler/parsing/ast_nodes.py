@@ -198,6 +198,7 @@ class BinOpNode(ExprNode):
     def __str__(self) -> str:
         return f"{self.arg1} {self.op.value} {self.arg2}"
 
+
 class BetweenNode(ExprNode):
     def __init__(self, expr: ExprNode, low: ExprNode, high: ExprNode, negated: bool = False):
         super().__init__()
@@ -232,6 +233,22 @@ class InNode(ExprNode):
         return f"{self.expr} {op} ({elems})"
 
 
+class InSubqueryNode(ExprNode):
+    def __init__(self, expr: ExprNode, subquery: "SelectStmtNode", negated: bool = False):
+        super().__init__()
+        self.expr = expr
+        self.subquery = subquery
+        self.negated = negated
+
+    @property
+    def childs(self) -> Tuple[ExprNode, "SelectStmtNode"]:
+        return self.expr, self.subquery
+
+    def __str__(self) -> str:
+        op = "NOT IN" if self.negated else "IN"
+        return f"{self.expr} {op} (SUBQUERY)"
+
+
 class IsNullNode(ExprNode):
     def __init__(self, expr: ExprNode, negated: bool = False):
         super().__init__()
@@ -246,17 +263,18 @@ class IsNullNode(ExprNode):
         return f"{self.expr} IS {'NOT ' if self.negated else ''}NULL"
 
 
-class SubQueryNode(ExprNode):
-    def __init__(self, query: "SelectStmtNode"):
+class ScalarSubqueryNode(ExprNode):
+    """Узел для скалярного подзапроса (возвращает одно значение)"""
+    def __init__(self, subquery: "SelectStmtNode"):
         super().__init__()
-        self.query = query
+        self.subquery = subquery
 
     @property
     def childs(self) -> Tuple["SelectStmtNode", ...]:
-        return self.query,
+        return self.subquery,
 
     def __str__(self) -> str:
-        return "EXISTS"
+        return "(SCALAR SUBQUERY)"
 
 
 class ExistsNode(ExprNode):
@@ -271,21 +289,6 @@ class ExistsNode(ExprNode):
 
     def __str__(self) -> str:
         return "NOT EXISTS" if self.negated else "EXISTS"
-
-
-class InSubqueryNode(ExprNode):
-    def __init__(self, expr: ExprNode, subquery: "SelectStmtNode", negated: bool = False):
-        super().__init__()
-        self.expr = expr
-        self.subquery = subquery
-        self.negated = negated
-
-    @property
-    def childs(self) -> Tuple[ExprNode, "SelectStmtNode"]:
-        return self.expr, self.subquery
-
-    def __str__(self) -> str:
-        return "NOT IN" if self.negated else "IN"
 
 
 class SelectItemNode(AstNode):
@@ -309,6 +312,7 @@ class TableBaseNode(AstNode):
         super().__init__()
         self.name = name
         self.alias = alias
+        self.joins = []
 
     def __str__(self) -> str:
         if self.alias:
@@ -565,7 +569,7 @@ class ConcatNode(ExprNode):
         super().__init__()
         self.left = left
         self.right = right
-        self._childs = (left, right)  # Используем защищенное поле
+        self._childs = (left, right)
 
     @property
     def childs(self) -> tuple:
@@ -577,6 +581,7 @@ class ConcatNode(ExprNode):
 
     def __str__(self) -> str:
         return f"{self.left} || {self.right}"
+
 
 class UnionNode(StmtNode):
     """Узел для UNION операций"""

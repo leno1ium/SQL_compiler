@@ -16,6 +16,7 @@ class Table:
         self.column_names: List[str] = []
         self.column_types: Dict[str, type] = {}
         self.rows: List[Dict[str, Any]] = []
+        self.aliases: Dict[str, str] = {}  # Добавляем поддержку псевдонимов
 
     def add_column(self, name: str, col_type: type) -> None:
         self.column_names.append(name)
@@ -180,7 +181,6 @@ class ExcelLoader:
         if not values:
             return str
 
-        # Используем _is_null_value для фильтрации
         non_null = [v for v in values if not self._is_null_value(v)]
         if not non_null:
             return str
@@ -190,27 +190,36 @@ class ExcelLoader:
         all_date = True
 
         for v in non_null:
+            # Проверяем int
             if all_int:
                 if isinstance(v, int):
                     pass
                 elif isinstance(v, float) and v.is_integer():
                     pass
-                elif isinstance(v, str) and v.strip().lstrip("-").isdigit():
-                    pass
+                elif isinstance(v, str):
+                    v_clean = v.strip()
+                    # Проверяем, может ли быть целым числом
+                    try:
+                        int(v_clean)
+                    except ValueError:
+                        all_int = False
                 else:
                     all_int = False
 
+            # Проверяем float
             if all_float:
                 if isinstance(v, (int, float)):
                     pass
                 elif isinstance(v, str):
+                    v_clean = v.strip()
                     try:
-                        float(v.strip())
+                        float(v_clean)
                     except ValueError:
                         all_float = False
                 else:
                     all_float = False
 
+            # Проверяем date
             if all_date:
                 if isinstance(v, datetime):
                     pass
@@ -239,6 +248,7 @@ class ExcelLoader:
                 else:
                     all_date = False
 
+        # Приоритет: int > float > date > str
         if all_int:
             return int
         if all_float:
@@ -248,7 +258,6 @@ class ExcelLoader:
         return str
 
     def _convert_value(self, value: Any, target_type: type) -> Any:
-        # Используем _is_null_value для проверки
         if self._is_null_value(value):
             return None
 
@@ -287,7 +296,7 @@ class ExcelLoader:
                             continue
                 return None
 
-            else:  # str
+            else:
                 return str(value).strip() if value is not None else None
 
         except (ValueError, TypeError):
