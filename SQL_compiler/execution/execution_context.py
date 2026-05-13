@@ -5,11 +5,13 @@ from SQL_compiler.parsing.ast_nodes import *
 
 
 class RowContext:
-    def __init__(self, table: Table, row: Dict[str, Any], tables: Dict[str, Table] = None):
+    def __init__(self, table: Table, row: Dict[str, Any], tables: Dict[str, Table] = None,
+                 outer_context: 'RowContext' = None):
         self.table = table
         self.row = row
         self.row_index = -1
         self.tables = tables or {}
+        self.outer_context = outer_context
         self.table_aliases = {}
         if hasattr(table, 'aliases'):
             self.table_aliases = table.aliases
@@ -17,6 +19,8 @@ class RowContext:
     def _convert_to_numeric(self, value: Any) -> Any:
         if isinstance(value, str):
             stripped = value.strip()
+            if '/' in stripped and len(stripped) == 10:
+                return stripped
             try:
                 if '.' in stripped:
                     return float(stripped)
@@ -33,17 +37,23 @@ class RowContext:
         if "." in column_name:
             parts = column_name.split(".")
             if len(parts) == 2:
-                table_or_alias = parts[0]
+                table_name = parts[0]
                 col = parts[1]
 
                 if column_name in self.row:
                     return self._convert_to_numeric(self.row[column_name])
 
                 for key in self.row.keys():
-                    if key == f"{table_or_alias}.{col}":
+                    if key == f"{table_name}.{col}":
                         return self._convert_to_numeric(self.row[key])
-                    if self.table_aliases.get(table_or_alias) and key == f"{self.table_aliases[table_or_alias]}.{col}":
+                    if self.table_aliases.get(table_name) and key == f"{self.table_aliases[table_name]}.{col}":
                         return self._convert_to_numeric(self.row[key])
+
+        if self.outer_context:
+            try:
+                return self.outer_context.get_value(column_name)
+            except KeyError:
+                pass
 
         base_name = column_name.split(".")[-1]
 
@@ -94,6 +104,8 @@ class GroupContext:
     def _convert_to_numeric(self, value: Any) -> Any:
         if isinstance(value, str):
             stripped = value.strip()
+            if '/' in stripped and len(stripped) == 10:
+                return stripped
             try:
                 if '.' in stripped:
                     return float(stripped)
@@ -168,6 +180,8 @@ class ExpressionEvaluator:
     @staticmethod
     def _to_numeric(value: Any) -> Any:
         if isinstance(value, str):
+            if '/' in value and len(value) == 10:
+                return value
             try:
                 if '.' in value.strip():
                     return float(value.strip())
@@ -177,9 +191,46 @@ class ExpressionEvaluator:
                 return value
         return value
 
+    def _parse_date(self, date_str: str) -> Optional[tuple]:
+        try:
+            parts = date_str.split('/')
+            if len(parts) == 3:
+                day = int(parts[0])
+                month = int(parts[1])
+                year = int(parts[2])
+                return (year, month, day)
+        except:
+            pass
+        return None
+
+    def _compare_dates(self, left: str, right: str, op: str) -> bool:
+        left_date = self._parse_date(left)
+        right_date = self._parse_date(right)
+
+        if left_date is None or right_date is None:
+            return False
+
+        if op == '>':
+            return left_date > right_date
+        elif op == '>=':
+            return left_date >= right_date
+        elif op == '<':
+            return left_date < right_date
+        elif op == '<=':
+            return left_date <= right_date
+        elif op == '==':
+            return left_date == right_date
+        elif op == '!=':
+            return left_date != right_date
+
+        return False
+
     def _ensure_numeric_types(self, left: Any, right: Any) -> tuple:
         left = self._to_numeric(left)
         right = self._to_numeric(right)
+
+        if isinstance(left, str) and isinstance(right, str) and '/' in left and '/' in right:
+            return left, right
 
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             return left, right
@@ -242,7 +293,7 @@ class ExpressionEvaluator:
             tables = {}
             if self.row_context and hasattr(self.row_context, 'tables'):
                 tables = self.row_context.tables
-            executor = QueryExecutor(tables)
+            executor = QueryExecutor(tables, self.row_context)
             result = executor.execute(node.subquery)
             exists = len(result) > 0
             return not exists if node.negated else exists
@@ -253,7 +304,7 @@ class ExpressionEvaluator:
             tables = {}
             if self.row_context and hasattr(self.row_context, 'tables'):
                 tables = self.row_context.tables
-            executor = QueryExecutor(tables)
+            executor = QueryExecutor(tables, self.row_context)
             left_result = executor.execute(node.left)
             right_result = executor.execute(node.right)
 
@@ -292,41 +343,34 @@ class ExpressionEvaluator:
         if self.row_context and hasattr(self.row_context, 'tables'):
             tables = self.row_context.tables
 
-        cache_key = self._get_cache_key(node.subquery, tables)
+        from SQL_compiler.execution.executor import QueryExecutor
+        executor = QueryExecutor(tables, self.row_context)
 
-        if cache_key in self._subquery_cache:
-            right_values = self._subquery_cache[cache_key]
-        else:
-            from SQL_compiler.execution.executor import QueryExecutor
-            executor = QueryExecutor(tables)
+        try:
+            subquery_rows = executor.execute(node.subquery)
+            right_values = []
+            for row in subquery_rows:
+                if row:
+                    value = list(row.values())[0] if row else None
+                    if value is not None:
+                        if isinstance(value, str):
+                            try:
+                                value = float(value) if '.' in value else int(value)
+                            except ValueError:
+                                pass
+                        right_values.append(value)
 
-            try:
-                subquery_rows = executor.execute(node.subquery)
-                right_values = []
-                for row in subquery_rows:
-                    if row:
-                        value = list(row.values())[0] if row else None
-                        if value is not None:
-                            if isinstance(value, str):
-                                try:
-                                    value = float(value) if '.' in value else int(value)
-                                except ValueError:
-                                    pass
-                            right_values.append(value)
-                if self._cache_enabled:
-                    self._subquery_cache[cache_key] = right_values
-            except Exception as e:
-                print(f"Error executing subquery: {e}")
-                right_values = []
+            if isinstance(left_value, str):
+                try:
+                    left_value = float(left_value) if '.' in left_value else int(left_value)
+                except ValueError:
+                    pass
 
-        if isinstance(left_value, str):
-            try:
-                left_value = float(left_value) if '.' in left_value else int(left_value)
-            except ValueError:
-                pass
-
-        result = left_value in right_values
-        return not result if node.negated else result
+            result = left_value in right_values
+            return not result if node.negated else result
+        except Exception as e:
+            print(f"Error executing IN subquery: {e}")
+            return False
 
     def _evaluate_scalar_subquery(self, node: ScalarSubqueryNode) -> Any:
         if ExpressionEvaluator._execution_depth >= ExpressionEvaluator._max_depth:
@@ -346,7 +390,7 @@ class ExpressionEvaluator:
                 return self._subquery_cache[cache_key]
 
             from SQL_compiler.execution.executor import QueryExecutor
-            executor = QueryExecutor(tables)
+            executor = QueryExecutor(tables, self.row_context)
 
             result_rows = executor.execute(node.subquery)
 
@@ -402,6 +446,15 @@ class ExpressionEvaluator:
         low = self.evaluate(node.low)
         high = self.evaluate(node.high)
 
+        if isinstance(value, str) and '/' in value:
+            value_date = self._parse_date(value)
+            low_date = self._parse_date(low) if isinstance(low, str) and '/' in low else None
+            high_date = self._parse_date(high) if isinstance(high, str) and '/' in high else None
+
+            if value_date and low_date and high_date:
+                result = low_date <= value_date <= high_date
+                return not result if node.negated else result
+
         value = self._to_numeric(value)
         low = self._to_numeric(low)
         high = self._to_numeric(high)
@@ -423,6 +476,21 @@ class ExpressionEvaluator:
     def _evaluate_binop(self, node: BinOpNode) -> Any:
         left = self.evaluate(node.arg1)
         right = self.evaluate(node.arg2)
+
+        if isinstance(left, str) and '/' in left and len(left) == 10:
+            if isinstance(right, str) and '/' in right:
+                if node.op == BinOp.GT:
+                    return self._compare_dates(left, right, '>')
+                elif node.op == BinOp.GE:
+                    return self._compare_dates(left, right, '>=')
+                elif node.op == BinOp.LT:
+                    return self._compare_dates(left, right, '<')
+                elif node.op == BinOp.LE:
+                    return self._compare_dates(left, right, '<=')
+                elif node.op == BinOp.EQ:
+                    return self._compare_dates(left, right, '==')
+                elif node.op == BinOp.NE:
+                    return self._compare_dates(left, right, '!=')
 
         if left is None or right is None:
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
@@ -537,6 +605,36 @@ class ExpressionEvaluator:
             else:
                 column = self._get_column_from_expr(node.args[0]) if node.args else None
                 return self.group_context.get_aggregate(node.name, column, node.distinct)
+
+        if FunctionManager.is_aggregate(node.name):
+            if node.name.upper() == 'COUNT':
+                if self.row_context and hasattr(self.row_context, 'table'):
+                    return len(self.row_context.table.rows)
+                return 0
+
+            if self.row_context and hasattr(self.row_context, 'table'):
+                column = self._get_column_from_expr(node.args[0]) if node.args else None
+                if column:
+                    values = []
+                    for row in self.row_context.table.rows:
+                        val = row.get(column)
+                        if val is not None:
+                            if isinstance(val, str):
+                                try:
+                                    val = float(val) if '.' in val else int(val)
+                                except ValueError:
+                                    pass
+                            if isinstance(val, (int, float)):
+                                values.append(val)
+                    if node.name.upper() == 'SUM':
+                        return sum(values) if values else 0
+                    elif node.name.upper() == 'AVG':
+                        return sum(values) / len(values) if values else 0
+                    elif node.name.upper() == 'MIN':
+                        return min(values) if values else None
+                    elif node.name.upper() == 'MAX':
+                        return max(values) if values else None
+            return None
 
         args = []
         for arg in node.args:

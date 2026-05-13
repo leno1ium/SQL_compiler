@@ -46,20 +46,27 @@ class SQLASTBuilder(Transformer):
         return IdentNode(args[0])
 
     def compound_ident(self, args):
-        """Обработка составных идентификаторов"""
+        """Обработка составных идентификаторов с поддержкой внешних таблиц"""
         if len(args) == 1:
             return args[0]
-        left = args[0]
-        right = args[2]
 
-        if isinstance(left, CompoundIdentNode):
-            parts = left.parts + [right]
-        elif isinstance(left, IdentNode):
-            parts = [left.name, right]
-        else:
-            parts = [str(left), right]
+        # Собираем все части
+        parts = []
+        for arg in args:
+            if isinstance(arg, str):
+                parts.append(arg)
+            elif isinstance(arg, IdentNode):
+                parts.append(arg.name)
+            elif isinstance(arg, Token):
+                parts.append(str(arg))
 
-        return CompoundIdentNode(parts)
+        # Проверяем, не является ли это ссылкой на внешнюю таблицу
+        # В коррелированных подзапросах может быть STUDENT.UNIV_ID
+        if len(parts) >= 2:
+            # Создаем обычный CompoundIdentNode
+            return CompoundIdentNode(parts)
+
+        return IdentNode(parts[0])
 
     def ident(self, args):
         return args[0]

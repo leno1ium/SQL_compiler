@@ -6,8 +6,9 @@ from SQL_compiler.parsing.ast_nodes import *
 
 
 class QueryExecutor:
-    def __init__(self, tables: Dict[str, Table]):
+    def __init__(self, tables: Dict[str, Table], outer_context: Optional[RowContext] = None):
         self.tables = tables
+        self.outer_context = outer_context
         ExpressionEvaluator._subquery_cache = {}
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
@@ -53,14 +54,22 @@ class QueryExecutor:
 
     def _execute_without_from(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
         result = []
-        evaluator = ExpressionEvaluator(None)
         for item in stmt.select_list:
             try:
-                value = evaluator.evaluate(item.expr)
+                if isinstance(item.expr, FuncCallNode) and item.expr.name.upper() == 'COUNT':
+                    if self.tables:
+                        first_table = list(self.tables.values())[0]
+                        value = len(first_table.rows)
+                    else:
+                        value = 1
+                else:
+                    evaluator = ExpressionEvaluator(None)
+                    value = evaluator.evaluate(item.expr)
                 name = item.alias or str(item.expr)
                 result.append({name: value})
             except Exception as e:
                 print(f"Ошибка: {e}")
+                result.append({str(item.expr): None})
         return result
 
     def _execute_from_and_joins(
@@ -109,7 +118,7 @@ class QueryExecutor:
                 temp_table = self._create_temp_table(clean_row)
                 if '__aliases__' in row:
                     temp_table.aliases = row['__aliases__']
-                context = RowContext(temp_table, clean_row, self.tables)
+                context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     result = evaluator.evaluate(where_clause)
@@ -131,7 +140,7 @@ class QueryExecutor:
 
     def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
         try:
-            sub_executor = QueryExecutor(self.tables)
+            sub_executor = QueryExecutor(self.tables, self.outer_context)
             rows = sub_executor.execute(table_node.query)
         except Exception as e:
             print(f"Subquery error: {e}")
@@ -232,7 +241,7 @@ class QueryExecutor:
         if hasattr(temp_table, 'aliases'):
             temp_table.aliases = merged.get('__aliases__', {})
 
-        context = RowContext(temp_table, clean_row, self.tables)
+        context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
         evaluator = ExpressionEvaluator(context)
         try:
             result = evaluator.evaluate(condition)
@@ -359,7 +368,7 @@ class QueryExecutor:
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
 
-            context = RowContext(temp_table, clean_row, self.tables)
+            context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             selected_row = self._project_row(select_list, context)
             result_rows.append(selected_row)
         return result_rows
@@ -379,7 +388,7 @@ class QueryExecutor:
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
 
-            context = RowContext(temp_table, clean_row, self.tables)
+            context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             evaluator = ExpressionEvaluator(context)
 
             key_parts = []
@@ -541,7 +550,7 @@ class QueryExecutor:
                 if '__aliases__' in row:
                     temp_table.aliases = row['__aliases__']
 
-                context = RowContext(temp_table, clean_row, self.tables)
+                context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     value = evaluator.evaluate(term.expr)

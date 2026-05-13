@@ -595,3 +595,13 @@ class UnionNode(StmtNode):
     def __str__(self) -> str:
         all_str = " ALL" if self.all else ""
         return f"UNION{all_str}"
+
+class OuterRefNode(ExprNode):
+    """Узел для ссылки на внешнюю таблицу в подзапросе (коррелированный подзапрос)"""
+    def __init__(self, column_name: str):
+        super().__init__()
+        self.column_name = column_name
+        self.full_name = column_name
+
+    def __str__(self) -> str:
+        return f"OUTER({self.column_name})"
