@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 
 from SQL_compiler.execution.table import Table
 from SQL_compiler.execution.execution_context import RowContext, ExpressionEvaluator, GroupContext
@@ -9,7 +10,8 @@ class QueryExecutor:
     def __init__(self, tables: Dict[str, Table], outer_context: Optional[RowContext] = None):
         self.tables = tables
         self.outer_context = outer_context
-        ExpressionEvaluator._subquery_cache = {}
+        self.limit = None
+        ExpressionEvaluator.clear_cache()
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
         if not isinstance(stmt, SelectStmtNode):
@@ -20,6 +22,9 @@ class QueryExecutor:
 
         source_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
 
+        if self.limit and len(source_rows) > self.limit:
+            source_rows = source_rows[:self.limit]
+
         if stmt.group_by:
             result_rows = self._execute_group_by(
                 source_rows,
@@ -27,25 +32,18 @@ class QueryExecutor:
                 stmt.select_list,
                 stmt.having_clause,
             )
-
-            if stmt.distinct:
-                result_rows = self._apply_distinct(result_rows)
-
+        else:
             if stmt.order_by:
-                result_rows = self._apply_order_by(result_rows, stmt.order_by)
-
-            if stmt.limit_offset:
-                result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
-
-            return result_rows
-
-        if stmt.order_by:
-            source_rows = self._apply_order_by(source_rows, stmt.order_by)
-
-        result_rows = self._execute_select(source_rows, stmt.select_list)
+                source_rows = self._apply_order_by(source_rows, stmt.order_by)
+            result_rows = self._execute_select(source_rows, stmt.select_list)
 
         if stmt.distinct:
             result_rows = self._apply_distinct(result_rows)
+
+        if stmt.order_by and not stmt.group_by:
+            pass
+        elif stmt.order_by:
+            result_rows = self._apply_order_by(result_rows, stmt.order_by)
 
         if stmt.limit_offset:
             result_rows = self._apply_limit_offset(result_rows, stmt.limit_offset)
@@ -114,29 +112,18 @@ class QueryExecutor:
         if where_clause and current_rows:
             filtered_rows = []
             for row in current_rows:
-                clean_row = {k: v for k, v in row.items() if not k.startswith('__')}
-                temp_table = self._create_temp_table(clean_row)
-                if '__aliases__' in row:
-                    temp_table.aliases = row['__aliases__']
-                context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
+                temp_table = self._create_temp_table(row)
+                context = RowContext(temp_table, row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     result = evaluator.evaluate(where_clause)
-                    if result is None:
-                        continue
-                    if isinstance(result, (int, float)):
-                        if result != 0:
-                            filtered_rows.append(row)
-                    elif isinstance(result, bool):
-                        if result:
-                            filtered_rows.append(row)
-                    elif result is not None:
+                    if result is True:
                         filtered_rows.append(row)
                 except Exception as e:
                     continue
             current_rows = filtered_rows
 
-        return current_rows if current_rows else []
+        return current_rows
 
     def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
         try:
@@ -231,28 +218,6 @@ class QueryExecutor:
 
         return merged
 
-    def _row_matches_condition(self, merged: Dict[str, Any], condition: Optional[AstNode]) -> bool:
-        if condition is None:
-            return True
-
-        clean_row = {k: v for k, v in merged.items() if not k.startswith('__')}
-        temp_table = self._create_temp_table(clean_row)
-
-        if hasattr(temp_table, 'aliases'):
-            temp_table.aliases = merged.get('__aliases__', {})
-
-        context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
-        evaluator = ExpressionEvaluator(context)
-        try:
-            result = evaluator.evaluate(condition)
-            if result is None:
-                return False
-            if isinstance(result, (int, float)):
-                return result != 0
-            return bool(result)
-        except Exception as e:
-            return False
-
     def _null_extended_row(self, base_row: Dict[str, Any], null_keys: List[str]) -> Dict[str, Any]:
         row = {k: v for k, v in base_row.items() if not k.startswith('__')}
         if '__aliases__' in base_row:
@@ -332,12 +297,18 @@ class QueryExecutor:
 
             for right_row in right_rows:
                 merged = self._merge_rows(left_row, right_row)
-
-                if not self._row_matches_condition(merged, condition):
+                temp_table = self._create_temp_table({k: v for k, v in merged.items() if not k.startswith('__')})
+                if '__aliases__' in merged:
+                    temp_table.aliases = merged['__aliases__']
+                context = RowContext(temp_table, merged, self.tables, self.outer_context)
+                evaluator = ExpressionEvaluator(context)
+                try:
+                    cond_result = evaluator.evaluate(condition) if condition else True
+                    if cond_result is True:
+                        matched = True
+                        result.append(merged)
+                except Exception as e:
                     continue
-
-                matched = True
-                result.append(merged)
 
             if join_type == "LEFT JOIN" and not matched:
                 result.append(self._null_extended_row(left_row, right_null_keys))
@@ -356,8 +327,11 @@ class QueryExecutor:
                 col_type = str
             else:
                 col_type = type(value)
-            table.add_column(col, col_type)
-        table.add_row(row)
+            if col not in table.column_names:
+                table.add_column(col, col_type)
+
+        clean_row = {k: v for k, v in row.items() if not k.startswith('__')}
+        table.add_row(clean_row)
         return table
 
     def _execute_select(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> List[Dict[str, Any]]:
@@ -415,12 +389,7 @@ class QueryExecutor:
                 evaluator = ExpressionEvaluator(group_context=group_context)
                 try:
                     having_result = evaluator.evaluate(having_clause)
-                    if having_result is None:
-                        continue
-                    if isinstance(having_result, (int, float)):
-                        if having_result == 0:
-                            continue
-                    elif not having_result:
+                    if not having_result:
                         continue
                 except Exception as e:
                     continue
@@ -512,10 +481,7 @@ class QueryExecutor:
         unique_rows = []
         seen = set()
         for row in rows:
-            row_tuple = tuple(
-                (k, self._hashable_value(v))
-                for k, v in sorted(row.items())
-            )
+            row_tuple = tuple(sorted((k, self._hashable_value(v)) for k, v in row.items()))
             if row_tuple not in seen:
                 seen.add(row_tuple)
                 unique_rows.append(row)
@@ -528,11 +494,15 @@ class QueryExecutor:
             return tuple(self._hashable_value(v) for v in value)
         if isinstance(value, dict):
             return tuple(sorted((k, self._hashable_value(v)) for k, v in value.items()))
+        if isinstance(value, datetime):
+            return value.isoformat()
         return value
 
     def _sort_key_value(self, value: Any) -> Any:
         if value is None:
             return (1, None)
+        if isinstance(value, datetime):
+            return (0, value)
         if isinstance(value, (int, float, str, bool)):
             return (0, value)
         return (0, str(value))

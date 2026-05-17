@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from SQL_compiler.execution.executor import QueryExecutor
-from SQL_compiler.execution.table import Table
+from SQL_compiler.execution.table import Table, ExcelLoader
 from SQL_compiler.parsing.parser import parse
 
 
@@ -848,30 +848,37 @@ class DatabaseViewer(QMainWindow):
         """)
 
     def load_database(self):
-        """Загрузка базы данных из Excel"""
+        """Загрузка базы данных из Excel с правильными типами"""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Load Database", "", "Excel Files (*.xlsx *.xls)"
         )
 
         if file_path:
             try:
-                self.current_db = pd.ExcelFile(file_path)
+                # Используем наш ExcelLoader вместо прямого чтения pandas
+                loader = ExcelLoader()
+                executor_tables = loader.load(file_path)
+
+                # Сохраняем таблицы для отображения в дереве
                 self.db_tables = {}
-
-                # Загружаем все листы как таблицы
-                for sheet_name in self.current_db.sheet_names:
-                    self.db_tables[sheet_name] = pd.read_excel(self.current_db, sheet_name)
-
-                # Создаем таблицы для QueryExecutor
-                executor_tables = self._convert_df_to_tables(self.db_tables)
+                for name, table in executor_tables.items():
+                    # Конвертируем обратно в DataFrame для отображения
+                    data = []
+                    for row in table.rows:
+                        data.append(row.copy())
+                    self.db_tables[name] = pd.DataFrame(data)
 
                 # Инициализируем executor с таблицами
                 self.query_executor = QueryExecutor(executor_tables)
 
                 self.update_db_tree()
 
+                QMessageBox.information(self, "Success", f"Loaded {len(executor_tables)} tables")
+
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load database: {str(e)}")
+                import traceback
+                traceback.print_exc()
 
     def _convert_df_to_tables(self, db_tables: Dict[str, pd.DataFrame]) -> Dict[str, Table]:
         """Конвертация DataFrame в объекты Table для QueryExecutor"""
@@ -1134,7 +1141,7 @@ class DatabaseViewer(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to load script: {str(e)}")
 
     def execute_current_query(self):
-        """Выполнить запрос из текущей вкладки"""
+        """Выполнить запрос из текущей вкладки с диагностикой"""
         current_tab = self.query_tabs.currentWidget()
         if not current_tab:
             return
@@ -1158,22 +1165,36 @@ class DatabaseViewer(QMainWindow):
             return
 
         try:
+            import time
+            start_time = time.time()
+
             normalized_query = self._normalize_query(query)
             ast = parse(normalized_query)
             result_rows = self.query_executor.execute(ast)
+
+            elapsed = time.time() - start_time
 
             if result_rows:
                 result_df = pd.DataFrame(result_rows)
                 self.results_table.setDataFrame(result_df, stretch=True)
                 tab_name = self.query_tabs.tabText(self.query_tabs.currentIndex())
-                self.rows_info_label.setText(f"Rows: {len(result_df)} | Query: {tab_name}")
+                self.rows_info_label.setText(f"Rows: {len(result_df)} | Time: {elapsed:.2f}s | Query: {tab_name}")
+
+                # Выводим типы колонок для диагностики
+                print(f"\n=== Результат запроса ===")
+                print(f"Строк: {len(result_df)}")
+                print(f"Колонки и типы:")
+                for col in result_df.columns:
+                    print(f"  {col}: {result_df[col].dtype}")
             else:
                 self.results_table.setRowCount(0)
                 self.results_table.setColumnCount(0)
-                self.rows_info_label.setText("Rows: 0")
+                self.rows_info_label.setText(f"Rows: 0 | Time: {elapsed:.2f}s")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Query execution failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def save_query_to_file(self):
         """Сохранение запроса в файл"""

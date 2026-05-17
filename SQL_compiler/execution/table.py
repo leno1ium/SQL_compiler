@@ -3,6 +3,8 @@ from datetime import datetime
 from pathlib import Path
 
 import openpyxl
+import pandas as pd
+import numpy as np
 
 
 class Table:
@@ -16,7 +18,7 @@ class Table:
         self.column_names: List[str] = []
         self.column_types: Dict[str, type] = {}
         self.rows: List[Dict[str, Any]] = []
-        self.aliases: Dict[str, str] = {}  # Добавляем поддержку псевдонимов
+        self.aliases: Dict[str, str] = {}
 
     def add_column(self, name: str, col_type: type) -> None:
         self.column_names.append(name)
@@ -30,14 +32,17 @@ class Table:
 
     def get_value(self, row_idx: int, column: str) -> Any:
         if row_idx < 0 or row_idx >= len(self.rows):
-            raise IndexError(f"Row index {row_idx} out of range (0-{len(self.rows) - 1})")
+            raise IndexError(f"Row index {row_idx} out of range")
         if column not in self.column_names:
             raise KeyError(f"Column '{column}' not found in table '{self.name}'")
-
         return self.rows[row_idx].get(column)
 
     def get_column_type(self, column: str) -> type:
         if column not in self.column_types:
+            # Ищем без префикса
+            base_name = column.split(".")[-1]
+            if base_name in self.column_types:
+                return self.column_types[base_name]
             raise KeyError(f"Column '{column}' not found in table '{self.name}'")
         return self.column_types[column]
 
@@ -79,39 +84,12 @@ class Table:
             example_str = ", ".join(examples) if examples else "(нет данных)"
             print(f"{col:<20} {type_name:<15} {example_str:<30}")
 
-    def print_data(self) -> None:
-        print(f"\nДанные таблицы {self.name}:")
-        print("-" * 80)
-
-        header = " | ".join(f"{col:<15}" for col in self.column_names)
-        print(header)
-        print("-" * 80)
-
-        for row in self.rows:
-            row_str = " | ".join(
-                f"{str(row.get(col, 'NULL')):<15}" for col in self.column_names
-            )
-            print(row_str)
-
-        print(f"\nВсего строк: {len(self.rows)}")
-
 
 class ExcelLoader:
-
     NULL_VALUES = {None, "", "\\N", "NULL", "null", "None"}
 
     def __init__(self):
         self.tables: Dict[str, Table] = {}
-
-    def _is_null_value(self, value: Any) -> bool:
-        """Проверить, является ли значение NULL"""
-        if value is None:
-            return True
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped in self.NULL_VALUES or stripped == "":
-                return True
-        return False
 
     def load(self, filepath: Union[str, Path]) -> Dict[str, Table]:
         filepath = Path(filepath)
@@ -120,184 +98,132 @@ class ExcelLoader:
 
         print(f"Загрузка Excel файла: {filepath}")
 
-        wb = openpyxl.load_workbook(filepath, data_only=True)
+        # Загружаем все листы с правильным определением типов
+        excel_file = pd.ExcelFile(filepath)
 
-        for sheet_name in wb.sheetnames:
-            sheet = wb[sheet_name]
+        for sheet_name in excel_file.sheet_names:
             print(f"  Обработка листа: {sheet_name}")
-            table = self._load_sheet(sheet_name, sheet)
+            # Читаем с автоматическим определением типов
+            df = pd.read_excel(filepath, sheet_name=sheet_name)
+            table = self._create_table_from_dataframe(sheet_name, df)
             self.tables[sheet_name] = table
+            table.print_schema()
 
-        wb.close()
         print(f"Загружено таблиц: {len(self.tables)}")
         return self.tables
 
-    def _load_sheet(self, name: str, sheet) -> Table:
+    def _create_table_from_dataframe(self, name: str, df: pd.DataFrame) -> Table:
         table = Table(name)
 
-        rows = list(sheet.iter_rows(values_only=True))
-        if not rows:
-            print(f"  Лист '{name}' пуст")
-            return table
+        # Определяем типы для каждой колонки
+        for col in df.columns:
+            col_type = self._detect_column_type(df[col])
+            table.add_column(col, col_type)
+            print(f"    Колонка '{col}': {col_type.__name__}")
 
-        headers = []
-        for i, cell in enumerate(rows[0]):
-            if cell is None:
-                header = f"Column{i + 1}"
-            else:
-                header = str(cell).strip()
-            headers.append(header)
-
-        print(f"    Найдено колонок: {len(headers)}")
-
-        data_rows = rows[1:] if len(rows) > 1 else []
-        print(f"    Найдено строк данных: {len(data_rows)}")
-
-        columns_data = [[] for _ in headers]
-        for row in data_rows:
-            for i, value in enumerate(row):
-                if i < len(columns_data):
-                    columns_data[i].append(value)
-
-        for i, header in enumerate(headers):
-            col_type = self._detect_type(columns_data[i])
-            table.add_column(header, col_type)
-            print(f"    Колонка '{header}': {col_type.__name__}")
-
-        for row in data_rows:
+        # Добавляем строки
+        for _, row in df.iterrows():
             row_dict = {}
-            for i, header in enumerate(headers):
-                if i < len(row):
-                    value = row[i]
-                    target_type = table.get_column_type(header)
-                    row_dict[header] = self._convert_value(value, target_type)
+            for col in df.columns:
+                value = row[col]
+                target_type = table.get_column_type(col)
+
+                if pd.isna(value) or value == "" or value is None:
+                    row_dict[col] = None
                 else:
-                    row_dict[header] = None
+                    row_dict[col] = self._convert_value(value, target_type)
             table.add_row(row_dict)
 
         return table
 
-    def _detect_type(self, values: List[Any]) -> type:
-        if not values:
+    def _detect_column_type(self, series: pd.Series) -> type:
+        """Определение типа колонки"""
+        non_null = series.dropna()
+        non_null = non_null[non_null != ""]
+
+        if len(non_null) == 0:
             return str
 
-        non_null = [v for v in values if not self._is_null_value(v)]
-        if not non_null:
-            return str
+        # Проверяем на целые числа
+        try:
+            if all(isinstance(x, (int, np.integer)) or
+                   (isinstance(x, float) and x == int(x)) or
+                   (isinstance(x, str) and x.strip().lstrip('-').isdigit())
+                   for x in non_null.head(100)):
+                return int
+        except:
+            pass
 
-        all_int = True
-        all_float = True
-        all_date = True
+        # Проверяем на числа с плавающей точкой
+        try:
+            if all(self._is_numeric(x) for x in non_null.head(100)):
+                return float
+        except:
+            pass
 
-        for v in non_null:
-            # Проверяем int
-            if all_int:
-                if isinstance(v, int):
-                    pass
-                elif isinstance(v, float) and v.is_integer():
-                    pass
-                elif isinstance(v, str):
-                    v_clean = v.strip()
-                    # Проверяем, может ли быть целым числом
-                    try:
-                        int(v_clean)
-                    except ValueError:
-                        all_int = False
-                else:
-                    all_int = False
-
-            # Проверяем float
-            if all_float:
-                if isinstance(v, (int, float)):
-                    pass
-                elif isinstance(v, str):
-                    v_clean = v.strip()
-                    try:
-                        float(v_clean)
-                    except ValueError:
-                        all_float = False
-                else:
-                    all_float = False
-
-            # Проверяем date
-            if all_date:
-                if isinstance(v, datetime):
-                    pass
-                elif isinstance(v, str):
-                    v_clean = v.strip()
-                    if self._is_null_value(v_clean):
-                        continue
-                    date_formats = [
-                        "%Y-%m-%d",
-                        "%d.%m.%Y",
-                        "%Y/%m/%d",
-                        "%d-%m-%Y",
-                        "%Y%m%d",
-                        "%d.%m.%y",
-                    ]
-                    found = False
-                    for fmt in date_formats:
-                        try:
-                            datetime.strptime(v_clean, fmt)
-                            found = True
-                            break
-                        except ValueError:
-                            continue
-                    if not found:
-                        all_date = False
-                else:
-                    all_date = False
-
-        # Приоритет: int > float > date > str
-        if all_int:
-            return int
-        if all_float:
-            return float
-        if all_date:
+        # Проверяем на даты
+        if all(self._is_date(x) for x in non_null.head(100)):
             return datetime
+
         return str
 
+    def _is_numeric(self, value) -> bool:
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return True
+        if isinstance(value, str):
+            try:
+                float(value.strip())
+                return True
+            except:
+                return False
+        return False
+
+    def _is_date(self, value) -> bool:
+        if isinstance(value, (pd.Timestamp, datetime)):
+            return True
+        if isinstance(value, str):
+            value = value.strip()
+            # Пробуем разные форматы
+            for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y",
+                        "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%y", "%Y%m%d"]:
+                try:
+                    datetime.strptime(value, fmt)
+                    return True
+                except:
+                    continue
+        return False
+
     def _convert_value(self, value: Any, target_type: type) -> Any:
-        if self._is_null_value(value):
+        if value is None or (isinstance(value, str) and value.strip() == ""):
             return None
 
         try:
             if target_type == int:
-                if isinstance(value, float) and value.is_integer():
-                    return int(value)
+                if isinstance(value, (float, np.floating)):
+                    return int(value) if abs(value - int(value)) < 0.000001 else None
                 if isinstance(value, str):
-                    cleaned = value.strip()
-                    return int(cleaned)
+                    return int(float(value.strip()))
                 return int(value)
 
             elif target_type == float:
                 if isinstance(value, str):
-                    cleaned = value.strip()
-                    return float(cleaned)
+                    return float(value.strip())
                 return float(value)
 
             elif target_type == datetime:
-                if isinstance(value, datetime):
-                    return value
+                if isinstance(value, (pd.Timestamp, datetime)):
+                    return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
                 if isinstance(value, str):
-                    cleaned = value.strip()
-                    date_formats = [
-                        "%Y-%m-%d",
-                        "%d.%m.%Y",
-                        "%Y/%m/%d",
-                        "%d-%m-%Y",
-                        "%Y%m%d",
-                        "%d.%m.%y",
-                    ]
-                    for fmt in date_formats:
+                    value = value.strip()
+                    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y",
+                                "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%y", "%Y%m%d"]:
                         try:
-                            return datetime.strptime(cleaned, fmt)
-                        except ValueError:
+                            return datetime.strptime(value, fmt)
+                        except:
                             continue
                 return None
 
             else:
-                return str(value).strip() if value is not None else None
-
+                return str(value)
         except (ValueError, TypeError):
             return None
