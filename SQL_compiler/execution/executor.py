@@ -25,14 +25,20 @@ class QueryExecutor:
         if self.limit and len(source_rows) > self.limit:
             source_rows = source_rows[:self.limit]
 
+        # Определяем тип запроса
         if stmt.group_by:
+            # Есть GROUP BY - группируем
             result_rows = self._execute_group_by(
                 source_rows,
                 stmt.group_by,
                 stmt.select_list,
                 stmt.having_clause,
             )
+        elif self._has_aggregate_functions(stmt.select_list):
+            # Нет GROUP BY, но есть агрегатные функции - одна строка результата
+            result_rows = self._execute_aggregate_without_group_by(source_rows, stmt.select_list)
         else:
+            # Обычный SELECT
             if stmt.order_by:
                 source_rows = self._apply_order_by(source_rows, stmt.order_by)
             result_rows = self._execute_select(source_rows, stmt.select_list)
@@ -40,9 +46,7 @@ class QueryExecutor:
         if stmt.distinct:
             result_rows = self._apply_distinct(result_rows)
 
-        if stmt.order_by and not stmt.group_by:
-            pass
-        elif stmt.order_by:
+        if stmt.order_by and stmt.group_by:
             result_rows = self._apply_order_by(result_rows, stmt.order_by)
 
         if stmt.limit_offset:
@@ -477,6 +481,22 @@ class QueryExecutor:
 
         return result
 
+    def _execute_union(self, left_stmt, right_stmt, all_flag=False):
+        left_result = self.execute(left_stmt)
+        right_result = self.execute(right_stmt)
+
+        if all_flag:
+            return left_result + right_result
+        else:
+            seen = set()
+            result = []
+            for row in left_result + right_result:
+                row_tuple = tuple(sorted(row.items()))
+                if row_tuple not in seen:
+                    seen.add(row_tuple)
+                    result.append(row)
+            return result
+
     def _apply_distinct(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         unique_rows = []
         seen = set()
@@ -557,3 +577,56 @@ class QueryExecutor:
         start = min(offset, len(rows))
         end = min(start + limit, len(rows))
         return rows[start:end]
+
+    def _has_aggregate_functions(self, select_list: List[SelectItemNode]) -> bool:
+        """Проверить, есть ли агрегатные функции в SELECT списке"""
+        for item in select_list:
+            if self._contains_aggregate(item.expr):
+                return True
+        return False
+
+    def _contains_aggregate(self, node: AstNode) -> bool:
+        """Рекурсивно проверить наличие агрегатных функций"""
+        if isinstance(node, FuncCallNode):
+            if node.name.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX'):
+                return True
+        for child in node.childs:
+            if self._contains_aggregate(child):
+                return True
+        return False
+
+    def _execute_aggregate_without_group_by(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> \
+    List[Dict[str, Any]]:
+        """Выполнить запрос с агрегатными функциями без GROUP BY - возвращает одну строку"""
+        if not rows:
+            return []
+
+        # Создаем групповой контекст со ВСЕМИ строками
+        group_context = GroupContext(rows)
+        evaluator = ExpressionEvaluator(group_context=group_context)
+
+        result_row = {}
+        for item in select_list:
+            if isinstance(item.expr, StarNode):
+                continue
+
+            try:
+                value = evaluator.evaluate(item.expr)
+                if item.alias:
+                    name = item.alias
+                elif isinstance(item.expr, FuncCallNode):
+                    func_name = item.expr.name
+                    if item.expr.args:
+                        arg_name = self._extract_arg_name(item.expr.args[0])
+                        name = f"{func_name}({arg_name})"
+                    else:
+                        name = f"{func_name}()"
+                else:
+                    name = str(item.expr)
+                result_row[name] = value
+            except Exception as e:
+                print(f"Ошибка при вычислении агрегата: {e}")
+                name = item.alias or str(item.expr)
+                result_row[name] = None
+
+        return [result_row] if result_row else []

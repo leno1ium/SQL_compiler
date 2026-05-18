@@ -88,6 +88,9 @@ class Table:
 class ExcelLoader:
     NULL_VALUES = {None, "", "\\N", "NULL", "null", "None"}
 
+    # Добавляем только это - единый формат для вывода
+    DATE_OUTPUT_FORMAT = "%Y-%m-%d"
+
     def __init__(self):
         self.tables: Dict[str, Table] = {}
 
@@ -98,12 +101,10 @@ class ExcelLoader:
 
         print(f"Загрузка Excel файла: {filepath}")
 
-        # Загружаем все листы с правильным определением типов
         excel_file = pd.ExcelFile(filepath)
 
         for sheet_name in excel_file.sheet_names:
             print(f"  Обработка листа: {sheet_name}")
-            # Читаем с автоматическим определением типов
             df = pd.read_excel(filepath, sheet_name=sheet_name)
             table = self._create_table_from_dataframe(sheet_name, df)
             self.tables[sheet_name] = table
@@ -115,13 +116,11 @@ class ExcelLoader:
     def _create_table_from_dataframe(self, name: str, df: pd.DataFrame) -> Table:
         table = Table(name)
 
-        # Определяем типы для каждой колонки
         for col in df.columns:
             col_type = self._detect_column_type(df[col])
             table.add_column(col, col_type)
             print(f"    Колонка '{col}': {col_type.__name__}")
 
-        # Добавляем строки
         for _, row in df.iterrows():
             row_dict = {}
             for col in df.columns:
@@ -137,7 +136,6 @@ class ExcelLoader:
         return table
 
     def _detect_column_type(self, series: pd.Series) -> type:
-        """Определение типа колонки"""
         non_null = series.dropna()
         non_null = non_null[non_null != ""]
 
@@ -183,7 +181,6 @@ class ExcelLoader:
             return True
         if isinstance(value, str):
             value = value.strip()
-            # Пробуем разные форматы
             for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y",
                         "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%y", "%Y%m%d"]:
                 try:
@@ -192,6 +189,32 @@ class ExcelLoader:
                 except:
                     continue
         return False
+
+    def _normalize_date(self, value: Any) -> Any:
+        """Привести дату к единому формату YYYY-MM-DD"""
+        if value is None:
+            return None
+
+        # Если уже в правильном формате
+        if isinstance(value, str) and len(value) == 10 and value[4] == '-' and value[7] == '-':
+            return value
+
+        # Если datetime или Timestamp
+        if isinstance(value, (pd.Timestamp, datetime)):
+            dt = value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
+            return dt.strftime("%Y-%m-%d")
+
+        # Если строка - парсим
+        if isinstance(value, str):
+            value = value.strip()
+            for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y",
+                        "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y", "%d.%m.%y", "%Y%m%d"]:
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    return dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    continue
+        return value
 
     def _convert_value(self, value: Any, target_type: type) -> Any:
         if value is None or (isinstance(value, str) and value.strip() == ""):
@@ -211,17 +234,9 @@ class ExcelLoader:
                 return float(value)
 
             elif target_type == datetime:
-                if isinstance(value, (pd.Timestamp, datetime)):
-                    return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
-                if isinstance(value, str):
-                    value = value.strip()
-                    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y",
-                                "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%y", "%Y%m%d"]:
-                        try:
-                            return datetime.strptime(value, fmt)
-                        except:
-                            continue
-                return None
+                # Только здесь изменяем - нормализуем дату
+                normalized = self._normalize_date(value)
+                return normalized if normalized != value else None
 
             else:
                 return str(value)

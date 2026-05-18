@@ -134,12 +134,22 @@ class ExpressionEvaluator:
 
     def _parse_date_string(self, value: str) -> Any:
         """Преобразование строки в дату с поддержкой разных форматов"""
+        if not isinstance(value, str):
+            return value
+
         if len(value) >= 2 and value[0] in '\'"' and value[-1] in '\'"':
             value = value[1:-1]
 
         value = value.strip()
 
-        # Основные форматы дат
+        # Если уже в формате YYYY-MM-DD
+        if len(value) == 10 and value[4] == '-' and value[7] == '-':
+            try:
+                return datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # Все поддерживаемые форматы
         formats = [
             "%Y-%m-%d",  # 2000-01-10
             "%d.%m.%Y",  # 10.01.2000
@@ -232,25 +242,59 @@ class ExpressionEvaluator:
 
     def _get_cache_key(self, subquery: SelectStmtNode) -> str:
         """Генерация уникального ключа для кэша подзапроса"""
+        # Базовый ключ
         key = str(id(subquery))
-        if self.row_context and self.row_context.outer_context:
-            # Для коррелированных подзапросов добавляем хеш текущей строки
-            row_hash = hashlib.md5(json.dumps(self.row_context.row, default=str, sort_keys=True).encode()).hexdigest()
+
+        # Для коррелированных подзапросов добавляем хеш текущей строки
+        if self.row_context and self.row_context.row:
+            # Создаем хеш значений текущей строки
+            row_values = []
+            for col, val in sorted(self.row_context.row.items()):
+                if col.startswith('__'):
+                    continue
+                row_values.append(f"{col}={val}")
+            row_hash = hashlib.md5('|'.join(row_values).encode()).hexdigest()
             key = f"{key}|{row_hash}"
+
         return key
+
+    def _is_correlated(self, subquery: SelectStmtNode) -> bool:
+        """Проверить, является ли подзапрос коррелированным"""
+        if not self.row_context:
+            return False
+
+        # Простая проверка: ищем ссылки на внешние колонки
+        outer_columns = set(self.row_context.row.keys())
+
+        def check_correlation(node):
+            if isinstance(node, (IdentNode, CompoundIdentNode)):
+                name = getattr(node, 'full_name', getattr(node, 'name', str(node)))
+                base_name = name.split('.')[-1]
+                if base_name in outer_columns:
+                    return True
+            for child in node.childs:
+                if check_correlation(child):
+                    return True
+            return False
+
+        return check_correlation(subquery)
 
     def _evaluate_exists(self, node: ExistsNode) -> bool:
         from SQL_compiler.execution.executor import QueryExecutor
 
-        cache_key = self._get_cache_key(node.subquery)
-        if cache_key in self._subquery_cache:
+        # Для коррелированных подзапросов не используем кэш
+        is_correlated = self._is_correlated(node.subquery)
+        cache_key = None if is_correlated else self._get_cache_key(node.subquery)
+
+        if not is_correlated and cache_key in self._subquery_cache:
             result = self._subquery_cache[cache_key]
         else:
             tables = getattr(self.row_context, 'tables', {})
             executor = QueryExecutor(tables, self.row_context)
             executor.limit = 1
             result = len(executor.execute(node.subquery)) > 0
-            if self._cache_enabled:
+
+            if not is_correlated and self._cache_enabled:
                 self._subquery_cache[cache_key] = result
 
         return not result if node.negated else result
@@ -258,8 +302,11 @@ class ExpressionEvaluator:
     def _evaluate_in_subquery(self, node: InSubqueryNode) -> bool:
         left_value = self.evaluate(node.expr)
 
-        cache_key = self._get_cache_key(node.subquery)
-        if cache_key in self._subquery_cache:
+        # Для коррелированных подзапросов не используем кэш
+        is_correlated = self._is_correlated(node.subquery)
+        cache_key = None if is_correlated else self._get_cache_key(node.subquery)
+
+        if not is_correlated and cache_key in self._subquery_cache:
             right_set = self._subquery_cache[cache_key]
         else:
             from SQL_compiler.execution.executor import QueryExecutor
@@ -274,7 +321,7 @@ class ExpressionEvaluator:
                     if value is not None:
                         right_set.add(value)
 
-            if self._cache_enabled:
+            if not is_correlated and self._cache_enabled:
                 self._subquery_cache[cache_key] = right_set
 
         result = left_value in right_set
@@ -287,26 +334,21 @@ class ExpressionEvaluator:
         ExpressionEvaluator._recursion_depth += 1
 
         try:
-            # Проверяем кэш
-            cache_key = self._get_cache_key(node.subquery)
-            if cache_key in self._subquery_cache:
-                return self._subquery_cache[cache_key]
-
             from SQL_compiler.execution.executor import QueryExecutor
             tables = getattr(self.row_context, 'tables', {})
             executor = QueryExecutor(tables, self.row_context)
             result_rows = executor.execute(node.subquery)
 
-            result = None
+            # Возвращаем список всех значений для коррелированных подзапросов
             if result_rows:
-                first_row = result_rows[0]
-                if first_row:
-                    result = next(iter(first_row.values())) if first_row else None
-
-            if self._cache_enabled:
-                self._subquery_cache[cache_key] = result
-
-            return result
+                values = []
+                for row in result_rows:
+                    if row:
+                        value = next(iter(row.values())) if row else None
+                        if value is not None:
+                            values.append(value)
+                return values if len(values) > 1 else (values[0] if values else None)
+            return None
         finally:
             ExpressionEvaluator._recursion_depth -= 1
 
@@ -335,6 +377,34 @@ class ExpressionEvaluator:
     def _evaluate_binop(self, node: BinOpNode) -> Any:
         left = self.evaluate(node.arg1)
         right = self.evaluate(node.arg2)
+
+        # Обработка списка (результат подзапроса с несколькими строками)
+        if isinstance(right, list):
+            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
+                # = ANY или IN - проверяем вхождение
+                if node.op == BinOp.EQ:
+                    return left in right
+                elif node.op in (BinOp.NE, BinOp.NE2):
+                    return left not in right
+            elif node.op in (BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
+                # Для сравнений >, < и т.д. - берем первый элемент
+                right = right[0] if right else None
+                if right is None:
+                    return None
+            else:
+                return None
+
+        # Обработка левой части как списка
+        if isinstance(left, list):
+            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
+                if node.op == BinOp.EQ:
+                    return right in left
+                elif node.op in (BinOp.NE, BinOp.NE2):
+                    return right not in left
+            else:
+                left = left[0] if left else None
+                if left is None:
+                    return None
 
         # NULL handling - по SQL NULL в сравнениях дает NULL (False в WHERE)
         if left is None or right is None:
