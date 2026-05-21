@@ -590,7 +590,7 @@ class UnionNode(StmtNode):
         self.left = left
         self.right = right
         self.all = all
-        self.childs = (left, right)
+        self._childs = (left, right)
 
     def __str__(self) -> str:
         all_str = " ALL" if self.all else ""

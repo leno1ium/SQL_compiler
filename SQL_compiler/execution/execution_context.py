@@ -219,7 +219,18 @@ class ExpressionEvaluator:
             executor = QueryExecutor(tables, self.row_context)
             left_result = executor.execute(node.left)
             right_result = executor.execute(node.right)
-            return left_result + right_result if node.all else self._union_unique(left_result, right_result)
+
+            if node.all:
+                return left_result + right_result
+            else:
+                seen = set()
+                result = []
+                for row in left_result + right_result:
+                    row_tuple = tuple(sorted(row.items()))
+                    if row_tuple not in seen:
+                        seen.add(row_tuple)
+                        result.append(row)
+                return result
         else:
             raise ValueError(f"Unknown node type: {type(node)}")
 

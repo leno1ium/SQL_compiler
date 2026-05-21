@@ -1,0 +1,3 @@
+SELECT *
+FROM UNIVERSITY 
+WHERE UNIV_NAME LIKE '_% _% _% _% _% _% _%';

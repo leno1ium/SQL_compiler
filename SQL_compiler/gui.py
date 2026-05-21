@@ -873,7 +873,7 @@ class DatabaseViewer(QMainWindow):
 
                 self.update_db_tree()
 
-                QMessageBox.information(self, "Success", f"Loaded {len(executor_tables)} tables")
+                # QMessageBox.information(self, "Success", f"Loaded {len(executor_tables)} tables")
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load database: {str(e)}")
@@ -1207,7 +1207,7 @@ class DatabaseViewer(QMainWindow):
             return
 
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save SQL Script", "query.sql", "SQL Files (*.sql);;Text Files (*.txt);;All Files (*)"
+            self, "Save SQL Script", "test queries/query.sql", "SQL Files (*.sql);;Text Files (*.txt);;All Files (*)"
         )
 
         if file_path:

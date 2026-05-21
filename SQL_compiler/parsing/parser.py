@@ -469,6 +469,53 @@ class SQLASTBuilder(Transformer):
         return LimitOffsetNode(limit, offset)
 
     def select_stmt(self, args):
+        # Проверяем наличие UNION
+        for i, arg in enumerate(args):
+            if isinstance(arg, Token) and self._kw(arg) == "UNION":
+                print(f"[DEBUG] Found UNION at position {i}")
+                union_all = False
+
+                if i + 1 < len(args) and isinstance(args[i + 1], Token) and self._kw(args[i + 1]) == "ALL":
+                    union_all = True
+                    right_start = i + 2
+                    print(f"[DEBUG] UNION ALL detected")
+                else:
+                    right_start = i + 1
+
+                # Левая часть - всё до UNION
+                left_args = args[:i]
+                # Правая часть - всё после UNION/UNION ALL
+                right_args = args[right_start:]
+
+                print(f"[DEBUG] Left args count: {len(left_args)}")
+                print(f"[DEBUG] Right args count: {len(right_args)}")
+
+                # Разбираем левую часть как обычный SELECT
+                left_stmt = self._build_select_stmt(left_args)
+
+                # Для правой части: если это уже SelectStmtNode, используем его
+                # Иначе разбираем как SELECT
+                if len(right_args) == 1 and isinstance(right_args[0], SelectStmtNode):
+                    right_stmt = right_args[0]
+                    print(f"[DEBUG] Right is already SelectStmtNode")
+                else:
+                    right_stmt = self._build_select_stmt(right_args)
+                    print(f"[DEBUG] Built right from args")
+
+                print(f"[DEBUG] Created UnionNode with all={union_all}")
+                return UnionNode(left_stmt, right_stmt, union_all)
+
+        # Нет UNION - обычный SELECT
+        return self._build_select_stmt(args)
+
+    def _build_select_stmt(self, args):
+        """Построение SelectStmtNode из аргументов (без UNION)"""
+        print(f"[DEBUG] Building SELECT from {len(args)} args")
+
+        # Если args уже содержит SelectStmtNode, возвращаем его
+        if len(args) == 1 and isinstance(args[0], SelectStmtNode):
+            return args[0]
+
         distinct = False
         select_list = []
         from_node = None

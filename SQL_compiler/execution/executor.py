@@ -14,6 +14,28 @@ class QueryExecutor:
         ExpressionEvaluator.clear_cache()
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
+        # Обработка UNION
+        if isinstance(stmt, UnionNode):
+            print(f"[DEBUG] Executing UnionNode, all={stmt.all}")
+            left_result = self.execute(stmt.left)
+            right_result = self.execute(stmt.right)
+            print(f"[DEBUG] Left: {len(left_result)} rows, Right: {len(right_result)} rows")
+
+            if stmt.all:
+                result = left_result + right_result
+                print(f"[DEBUG] UNION ALL total: {len(result)} rows")
+                return result
+            else:
+                seen = set()
+                result = []
+                for row in left_result + right_result:
+                    row_tuple = tuple(sorted(row.items()))
+                    if row_tuple not in seen:
+                        seen.add(row_tuple)
+                        result.append(row)
+                print(f"[DEBUG] UNION unique total: {len(result)} rows")
+                return result
+
         if not isinstance(stmt, SelectStmtNode):
             raise TypeError(f"Expected SelectStmtNode, got {type(stmt)}")
 
@@ -79,6 +101,7 @@ class QueryExecutor:
             from_node: FromNode,
             where_clause: Optional[AstNode],
     ) -> List[Dict[str, Any]]:
+        print(f"[DEBUG] _execute_from_and_joins: from_node={from_node}, where_clause={where_clause}")
         if not from_node.tables:
             return []
 
@@ -481,19 +504,23 @@ class QueryExecutor:
 
         return result
 
-    def _execute_union(self, left_stmt, right_stmt, all_flag=False):
-        left_result = self.execute(left_stmt)
-        right_result = self.execute(right_stmt)
+    def _execute_union(self, union_node: UnionNode) -> List[Dict[str, Any]]:
+        """Выполнение UNION запроса"""
+        left_result = self.execute(union_node.left)
+        right_result = self.execute(union_node.right)
 
-        if all_flag:
+        if union_node.all:
+            # UNION ALL - просто объединяем
             return left_result + right_result
         else:
+            # UNION - уникальные строки
             seen = set()
             result = []
             for row in left_result + right_result:
-                row_tuple = tuple(sorted(row.items()))
-                if row_tuple not in seen:
-                    seen.add(row_tuple)
+                # Создаем ключ из всех значений строки
+                row_key = tuple(sorted((k, self._hashable_value(v)) for k, v in row.items()))
+                if row_key not in seen:
+                    seen.add(row_key)
                     result.append(row)
             return result
 
