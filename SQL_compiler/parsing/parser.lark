@@ -114,6 +114,20 @@ expr_args: expr_list
              | add_expr "=" add_expr -> eq
              | add_expr "!=" add_expr -> ne
              | add_expr "<>" add_expr -> ne
+             | add_expr ">" ALL LPAREN select_stmt RPAREN -> all_any_gt
+             | add_expr ">=" ALL LPAREN select_stmt RPAREN -> all_any_ge
+             | add_expr "<" ALL LPAREN select_stmt RPAREN -> all_any_lt
+             | add_expr "<=" ALL LPAREN select_stmt RPAREN -> all_any_le
+             | add_expr "=" ALL LPAREN select_stmt RPAREN -> all_any_eq
+             | add_expr "!=" ALL LPAREN select_stmt RPAREN -> all_any_ne
+             | add_expr "<>" ALL LPAREN select_stmt RPAREN -> all_any_ne2
+             | add_expr ">" ANY LPAREN select_stmt RPAREN -> any_gt
+             | add_expr ">=" ANY LPAREN select_stmt RPAREN -> any_ge
+             | add_expr "<" ANY LPAREN select_stmt RPAREN -> any_lt
+             | add_expr "<=" ANY LPAREN select_stmt RPAREN -> any_le
+             | add_expr "=" ANY LPAREN select_stmt RPAREN -> any_eq
+             | add_expr "!=" ANY LPAREN select_stmt RPAREN -> any_ne
+             | add_expr "<>" ANY LPAREN select_stmt RPAREN -> any_ne2
 
 // LIKE оператор
 ?like_expr: compare_expr

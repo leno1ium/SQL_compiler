@@ -372,68 +372,84 @@ class ExpressionEvaluator:
 
     def _evaluate_all_any(self, node: AllAnyNode) -> bool:
         """Вычисление ALL/ANY подзапроса"""
-        left_value = self.evaluate(node.expr)
+        print(f"[DEBUG ALL_ANY] Evaluating: {node.expr} {node.operator} {node.all_any} (subquery)")
 
-        # Для коррелированных подзапросов не используем кэш
+        left_value = self.evaluate(node.expr)
+        print(f"[DEBUG ALL_ANY] Left value: {left_value}")
+
+        # For correlated subqueries, don't use cache
         is_correlated = self._is_correlated(node.subquery)
         cache_key = None if is_correlated else self._get_cache_key(node.subquery)
 
         if not is_correlated and cache_key in self._subquery_cache:
             right_values = self._subquery_cache[cache_key]
+            print(f"[DEBUG ALL_ANY] Using cached values: {right_values}")
         else:
             from SQL_compiler.execution.executor import QueryExecutor
             tables = getattr(self.row_context, 'tables', {})
+
+            # Pass current context for correlated subqueries
             executor = QueryExecutor(tables, self.row_context)
             subquery_rows = executor.execute(node.subquery)
 
             right_values = []
             for row in subquery_rows:
                 if row:
+                    # Take the first value from each row
                     value = next(iter(row.values())) if row else None
                     if value is not None:
                         right_values.append(value)
 
+            print(f"[DEBUG ALL_ANY] Subquery returned values: {right_values}")
+
             if not is_correlated and self._cache_enabled:
                 self._subquery_cache[cache_key] = right_values
 
+        # Handle empty result set
         if not right_values:
-            # Если подзапрос не вернул строк
-            if node.all_any == 'ALL':
-                return True  # ALL над пустым множеством = TRUE
-            else:  # ANY
-                return False  # ANY над пустым множеством = FALSE
+            # ALL over empty set = TRUE, ANY over empty set = FALSE
+            result = node.all_any == 'ALL'
+            print(f"[DEBUG ALL_ANY] Empty set, result={result}")
+            return result
 
-        # Вычисляем в зависимости от оператора
+        # Evaluate based on operator and ALL/ANY
+        operator = node.operator
+
         if node.all_any == 'ALL':
-            # ALL - все значения должны удовлетворять условию
-            if node.operator == '<':
-                return all(left_value < val for val in right_values)
-            elif node.operator == '<=':
-                return all(left_value <= val for val in right_values)
-            elif node.operator == '>':
-                return all(left_value > val for val in right_values)
-            elif node.operator == '>=':
-                return all(left_value >= val for val in right_values)
-            elif node.operator == '=':
-                return all(left_value == val for val in right_values)
-            elif node.operator in ('!=', '<>'):
-                return all(left_value != val for val in right_values)
+            # ALL: all values must satisfy the condition
+            if operator == '<':
+                result = all(left_value < val for val in right_values)
+            elif operator == '<=':
+                result = all(left_value <= val for val in right_values)
+            elif operator == '>':
+                result = all(left_value > val for val in right_values)
+            elif operator == '>=':
+                result = all(left_value >= val for val in right_values)
+            elif operator == '=':
+                result = all(left_value == val for val in right_values)
+            elif operator in ('!=', '<>'):
+                result = all(left_value != val for val in right_values)
+            else:
+                result = False
         else:  # ANY
-            # ANY - хотя бы одно значение должно удовлетворять условию
-            if node.operator == '<':
-                return any(left_value < val for val in right_values)
-            elif node.operator == '<=':
-                return any(left_value <= val for val in right_values)
-            elif node.operator == '>':
-                return any(left_value > val for val in right_values)
-            elif node.operator == '>=':
-                return any(left_value >= val for val in right_values)
-            elif node.operator == '=':
-                return any(left_value == val for val in right_values)
-            elif node.operator in ('!=', '<>'):
-                return any(left_value != val for val in right_values)
+            # ANY: at least one value must satisfy the condition
+            if operator == '<':
+                result = any(left_value < val for val in right_values)
+            elif operator == '<=':
+                result = any(left_value <= val for val in right_values)
+            elif operator == '>':
+                result = any(left_value > val for val in right_values)
+            elif operator == '>=':
+                result = any(left_value >= val for val in right_values)
+            elif operator == '=':
+                result = any(left_value == val for val in right_values)
+            elif operator in ('!=', '<>'):
+                result = any(left_value != val for val in right_values)
+            else:
+                result = False
 
-        return False
+        print(f"[DEBUG ALL_ANY] Result: {result}")
+        return result
 
     def _evaluate_in_subquery(self, node: InSubqueryNode) -> bool:
         left_value = self.evaluate(node.expr)

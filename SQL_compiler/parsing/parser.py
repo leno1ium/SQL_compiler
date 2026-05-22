@@ -231,26 +231,80 @@ class SQLASTBuilder(Transformer):
         # args: [select_stmt]
         return args[0]
 
-    def all_any_subquery(self, args):
-        """Обработка ALL/ANY подзапроса"""
+    def all_any_gt(self, args):
+        """Обработка > ALL (subquery)"""
+        return self._make_all_any(args, '>', 'ALL')
+
+    def all_any_ge(self, args):
+        """Обработка >= ALL (subquery)"""
+        return self._make_all_any(args, '>=', 'ALL')
+
+    def all_any_lt(self, args):
+        """Обработка < ALL (subquery)"""
+        return self._make_all_any(args, '<', 'ALL')
+
+    def all_any_le(self, args):
+        """Обработка <= ALL (subquery)"""
+        return self._make_all_any(args, '<=', 'ALL')
+
+    def all_any_eq(self, args):
+        """Обработка = ALL (subquery)"""
+        return self._make_all_any(args, '=', 'ALL')
+
+    def all_any_ne(self, args):
+        """Обработка != ALL (subquery)"""
+        return self._make_all_any(args, '!=', 'ALL')
+
+    def all_any_ne2(self, args):
+        """Обработка <> ALL (subquery)"""
+        return self._make_all_any(args, '<>', 'ALL')
+
+    def any_gt(self, args):
+        """Обработка > ANY (subquery)"""
+        return self._make_all_any(args, '>', 'ANY')
+
+    def any_ge(self, args):
+        """Обработка >= ANY (subquery)"""
+        return self._make_all_any(args, '>=', 'ANY')
+
+    def any_lt(self, args):
+        """Обработка < ANY (subquery)"""
+        return self._make_all_any(args, '<', 'ANY')
+
+    def any_le(self, args):
+        """Обработка <= ANY (subquery)"""
+        return self._make_all_any(args, '<=', 'ANY')
+
+    def any_eq(self, args):
+        """Обработка = ANY (subquery)"""
+        return self._make_all_any(args, '=', 'ANY')
+
+    def any_ne(self, args):
+        """Обработка != ANY (subquery)"""
+        return self._make_all_any(args, '!=', 'ANY')
+
+    def any_ne2(self, args):
+        """Обработка <> ANY (subquery)"""
+        return self._make_all_any(args, '<>', 'ANY')
+
+    def _make_all_any(self, args, operator: str, all_any_type: str):
+        """Создание AllAnyNode из аргументов"""
+        print(f"[DEBUG] _make_all_any: op={operator}, type={all_any_type}, args={args}")
+
         expr = None
-        operator = None
-        all_any = None
         subquery = None
 
         for arg in args:
-            if isinstance(arg, AstNode) and expr is None:
-                expr = arg
+            if isinstance(arg, Token):
+                # Skip tokens like LPAREN, RPAREN
+                continue
             elif isinstance(arg, SelectStmtNode):
                 subquery = arg
-            elif isinstance(arg, Token):
-                token_str = str(arg).upper()
-                if token_str in ('ALL', 'ANY'):
-                    all_any = token_str
-                elif token_str in ('<', '>', '<=', '>=', '=', '!='):
-                    operator = token_str
+            elif isinstance(arg, AstNode) and expr is None:
+                expr = arg
 
-        return AllAnyNode(expr, operator, subquery, all_any)
+        print(f"[DEBUG] Created AllAnyNode: expr={expr}, op={operator}, type={all_any_type}")
+        return AllAnyNode(expr, operator, subquery, all_any_type)
 
     def scalar_subquery(self, args):
         """Обработка скалярного подзапроса (SELECT ...) в выражении"""
