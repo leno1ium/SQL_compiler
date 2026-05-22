@@ -869,7 +869,7 @@ class DatabaseViewer(QMainWindow):
                     self.db_tables[name] = pd.DataFrame(data)
 
                 # Инициализируем executor с таблицами
-                self.query_executor = QueryExecutor(executor_tables)
+                self.query_executor = QueryExecutor(executor_tables, outer_context=None)
 
                 self.update_db_tree()
 

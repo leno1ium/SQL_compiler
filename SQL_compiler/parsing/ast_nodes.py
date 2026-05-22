@@ -94,6 +94,7 @@ class CompoundIdentNode(ExprNode):
     def __init__(self, parts: List[str]):
         super().__init__()
         self.parts = parts
+        self.parts = [p for p in parts if p and p != '.']
 
     @property
     def full_name(self) -> str:
@@ -265,6 +266,7 @@ class IsNullNode(ExprNode):
 
 class ScalarSubqueryNode(ExprNode):
     """Узел для скалярного подзапроса (возвращает одно значение)"""
+
     def __init__(self, subquery: "SelectStmtNode"):
         super().__init__()
         self.subquery = subquery
@@ -389,15 +391,15 @@ class LimitOffsetNode(AstNode):
 
 class SelectStmtNode(StmtNode):
     def __init__(
-        self,
-        distinct: bool,
-        select_list: List[SelectItemNode],
-        from_node: Optional[FromNode] = None,
-        where_clause: Optional[AstNode] = None,
-        group_by: Optional[List[ExprNode]] = None,
-        having_clause: Optional[ExprNode] = None,
-        order_by: Optional[List[OrderingTermNode]] = None,
-        limit_offset: Optional[LimitOffsetNode] = None,
+            self,
+            distinct: bool,
+            select_list: List[SelectItemNode],
+            from_node: Optional[FromNode] = None,
+            where_clause: Optional[AstNode] = None,
+            group_by: Optional[List[ExprNode]] = None,
+            having_clause: Optional[ExprNode] = None,
+            order_by: Optional[List[OrderingTermNode]] = None,
+            limit_offset: Optional[LimitOffsetNode] = None,
     ):
         super().__init__()
         self.distinct = distinct
@@ -585,6 +587,7 @@ class ConcatNode(ExprNode):
 
 class UnionNode(StmtNode):
     """Узел для UNION операций"""
+
     def __init__(self, left: SelectStmtNode, right: SelectStmtNode, all: bool = False):
         super().__init__()
         self.left = left
@@ -596,8 +599,24 @@ class UnionNode(StmtNode):
         all_str = " ALL" if self.all else ""
         return f"UNION{all_str}"
 
+
+class AllAnyNode(ExprNode):
+    """Узел для ALL/ANY подзапроса"""
+
+    def __init__(self, expr: ExprNode, operator: str, subquery: SelectStmtNode, all_any: str):
+        super().__init__()
+        self.expr = expr
+        self.operator = operator  # '=', '<', '>', '<=', '>=', '!='
+        self.subquery = subquery
+        self.all_any = all_any.upper()  # 'ALL' или 'ANY'
+        self._childs = (expr, subquery)
+
+    def __str__(self) -> str:
+        return f"{self.expr} {self.operator} {self.all_any} (SUBQUERY)"
+
 class OuterRefNode(ExprNode):
     """Узел для ссылки на внешнюю таблицу в подзапросе (коррелированный подзапрос)"""
+
     def __init__(self, column_name: str):
         super().__init__()
         self.column_name = column_name

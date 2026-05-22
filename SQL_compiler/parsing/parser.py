@@ -50,7 +50,7 @@ class SQLASTBuilder(Transformer):
         if len(args) == 1:
             return args[0]
 
-        # Собираем все части
+        # Собираем все части, игнорируя точки как отдельные токены
         parts = []
         for arg in args:
             if isinstance(arg, str):
@@ -58,15 +58,15 @@ class SQLASTBuilder(Transformer):
             elif isinstance(arg, IdentNode):
                 parts.append(arg.name)
             elif isinstance(arg, Token):
-                parts.append(str(arg))
+                token_str = str(arg)
+                if token_str != '.':
+                    parts.append(token_str)
 
-        # Проверяем, не является ли это ссылкой на внешнюю таблицу
-        # В коррелированных подзапросах может быть STUDENT.UNIV_ID
+        # Объединяем части
         if len(parts) >= 2:
-            # Создаем обычный CompoundIdentNode
             return CompoundIdentNode(parts)
 
-        return IdentNode(parts[0])
+        return IdentNode(parts[0] if parts else "")
 
     def ident(self, args):
         return args[0]
@@ -230,6 +230,27 @@ class SQLASTBuilder(Transformer):
         """Обработка подзапроса для IN"""
         # args: [select_stmt]
         return args[0]
+
+    def all_any_subquery(self, args):
+        """Обработка ALL/ANY подзапроса"""
+        expr = None
+        operator = None
+        all_any = None
+        subquery = None
+
+        for arg in args:
+            if isinstance(arg, AstNode) and expr is None:
+                expr = arg
+            elif isinstance(arg, SelectStmtNode):
+                subquery = arg
+            elif isinstance(arg, Token):
+                token_str = str(arg).upper()
+                if token_str in ('ALL', 'ANY'):
+                    all_any = token_str
+                elif token_str in ('<', '>', '<=', '>=', '=', '!='):
+                    operator = token_str
+
+        return AllAnyNode(expr, operator, subquery, all_any)
 
     def scalar_subquery(self, args):
         """Обработка скалярного подзапроса (SELECT ...) в выражении"""

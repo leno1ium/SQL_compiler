@@ -45,6 +45,7 @@ BETWEEN: "between"i
 EXISTS: "exists"i
 UNION: "union"i
 ALL: "all"i
+ANY: "any"i
 CONCAT: "||"
 
 IDENT: LETTER (LETTER | DIGIT | "_")*

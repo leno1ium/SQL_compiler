@@ -20,35 +20,72 @@ class RowContext:
         self._scalar_cache = {}
 
     def get_value(self, column_name: str) -> Any:
-        # Быстрый поиск
-        if column_name in self.row:
-            return self.row[column_name]
+        print(f"[DEBUG RowContext] Looking for '{column_name}'")
+        print(f"[DEBUG RowContext] Has outer_context: {self.outer_context is not None}")
 
-        # Поиск с префиксом таблицы
-        if "." in column_name:
-            parts = column_name.split(".")
+        # Normalize column name (remove extra dots)
+        normalized_name = column_name.replace('...', '.').replace('..', '.')
+        print(f"[DEBUG RowContext] Normalized name: '{normalized_name}'")
+
+        # Direct match
+        if normalized_name in self.row:
+            print(f"[DEBUG RowContext] Found exact match: {self.row[normalized_name]}")
+            return self.row[normalized_name]
+
+        # Search with table prefix
+        if "." in normalized_name:
+            parts = normalized_name.split(".")
             if len(parts) == 2:
                 table_alias, col = parts
-                for key in self.row:
-                    if key == f"{table_alias}.{col}":
-                        return self.row[key]
-                    if self.table_aliases.get(table_alias) and key == f"{self.table_aliases[table_alias]}.{col}":
-                        return self.row[key]
 
-        # Поиск по базовому имени
-        base_name = column_name.split(".")[-1]
+                # FIX: First try the exact alias.column combination
+                alias_key = f"{table_alias}.{col}"
+                if alias_key in self.row:
+                    print(f"[DEBUG RowContext] Found alias match: {self.row[alias_key]}")
+                    return self.row[alias_key]
+
+                # FIX: Don't do suffix matching for correlated queries
+                # Instead, check outer context first for specific alias references
+                # BEFORE falling back to suffix matching
+
+                # Check outer context for exact match
+                if self.outer_context:
+                    value = self.outer_context.get_value(normalized_name)
+                    if value is not None:
+                        print(f"[DEBUG RowContext] Found in outer context: {value}")
+                        return value
+
+                # Only do suffix matching as last resort for current row
+                for key in self.row:
+                    if key.endswith(f".{col}"):
+                        value = self.row[key]
+                        print(f"[DEBUG RowContext] Found suffix match: {value}")
+                        if value is not None:
+                            return value
+
+        # Search by base name
+        base_name = normalized_name.split(".")[-1]
         if base_name in self.row:
+            print(f"[DEBUG RowContext] Found base_name '{base_name}': {self.row[base_name]}")
             return self.row[base_name]
 
-        # Поиск в конце ключа
-        for key, val in self.row.items():
-            if key.endswith(f".{base_name}"):
-                return val
-
-        # Коррелированный подзапрос - поиск во внешнем контексте
+        # CORRELATED SUBQUERY - search in outer context
         if self.outer_context:
-            return self.outer_context.get_value(column_name)
+            print("[DEBUG] Checking outer_context.row =", self.outer_context.row if self.outer_context else None)
 
+            # Try the full column name first (e.g., 'u.univ_id')
+            value = self.outer_context.get_value(column_name)
+            if value is not None:
+                return value
+
+            # Try with just the column name (e.g., 'univ_id')
+            base_name = column_name.split('.')[-1]
+            if base_name != column_name:
+                value = self.outer_context.get_value(base_name)
+                if value is not None:
+                    return value
+
+        print(f"[DEBUG RowContext] Column '{column_name}' not found")
         return None
 
     def get_type(self, column_name: str) -> type:
@@ -178,6 +215,8 @@ class ExpressionEvaluator:
 
         if isinstance(node, NumNode):
             return node.num
+        elif isinstance(node, AllAnyNode):
+            return self._evaluate_all_any(node)
         elif isinstance(node, StringNode):
             return self._parse_date_string(node.value)
         elif isinstance(node, BoolNode):
@@ -245,6 +284,8 @@ class ExpressionEvaluator:
         return result
 
     def _get_column_value(self, column_name: str) -> Any:
+        print(f"[DEBUG _get_column_value] column_name='{column_name}'")
+
         if self.row_context:
             return self.row_context.get_value(column_name)
         elif self.group_context and self.group_context.rows:
@@ -272,43 +313,127 @@ class ExpressionEvaluator:
     def _is_correlated(self, subquery: SelectStmtNode) -> bool:
         """Проверить, является ли подзапрос коррелированным"""
         if not self.row_context:
+            print(f"[DEBUG] No row_context, not correlated")
             return False
 
-        # Простая проверка: ищем ссылки на внешние колонки
-        outer_columns = set(self.row_context.row.keys())
+        # Собираем имена колонок из внешней строки
+        outer_columns = set()
+        for key in self.row_context.row.keys():
+            if not key.startswith('__'):
+                outer_columns.add(key.split('.')[-1])
 
+        print(f"[DEBUG] Outer columns: {outer_columns}")
+
+        # Проверяем, есть ли ссылки на внешние колонки в подзапросе
         def check_correlation(node):
+            if node is None:
+                return False
             if isinstance(node, (IdentNode, CompoundIdentNode)):
                 name = getattr(node, 'full_name', getattr(node, 'name', str(node)))
+                outer_full = set(self.row_context.row.keys())
+                outer_base = {k.split('.')[-1] for k in outer_full}
+
+                if name in outer_full:
+                    return True
+
                 base_name = name.split('.')[-1]
-                if base_name in outer_columns:
+                if base_name in outer_base:
                     return True
             for child in node.childs:
                 if check_correlation(child):
                     return True
             return False
 
-        return check_correlation(subquery)
+        result = check_correlation(subquery)
+        print(f"[DEBUG] Is correlated: {result}")
+        return result
 
     def _evaluate_exists(self, node: ExistsNode) -> bool:
         from SQL_compiler.execution.executor import QueryExecutor
+
+        print(f"[DEBUG EXISTS] ========== START ==========")
+        print(
+            f"[DEBUG EXISTS] Current row_context has outer_context: {self.row_context.outer_context is not None if self.row_context else False}")
+
+        tables = getattr(self.row_context, 'tables', {})
+
+        # ВАЖНО: передаем self.row_context как outer_context
+        executor = QueryExecutor(tables, self.row_context)
+        executor.limit = 1
+
+        try:
+            subquery_rows = executor.execute(node.subquery)
+            result = len(subquery_rows) > 0
+            print(f"[DEBUG EXISTS] Result: {result}")
+            return not result if node.negated else result
+        except Exception as e:
+            print(f"[DEBUG EXISTS] Error: {e}")
+            return False
+
+    def _evaluate_all_any(self, node: AllAnyNode) -> bool:
+        """Вычисление ALL/ANY подзапроса"""
+        left_value = self.evaluate(node.expr)
 
         # Для коррелированных подзапросов не используем кэш
         is_correlated = self._is_correlated(node.subquery)
         cache_key = None if is_correlated else self._get_cache_key(node.subquery)
 
         if not is_correlated and cache_key in self._subquery_cache:
-            result = self._subquery_cache[cache_key]
+            right_values = self._subquery_cache[cache_key]
         else:
+            from SQL_compiler.execution.executor import QueryExecutor
             tables = getattr(self.row_context, 'tables', {})
             executor = QueryExecutor(tables, self.row_context)
-            executor.limit = 1
-            result = len(executor.execute(node.subquery)) > 0
+            subquery_rows = executor.execute(node.subquery)
+
+            right_values = []
+            for row in subquery_rows:
+                if row:
+                    value = next(iter(row.values())) if row else None
+                    if value is not None:
+                        right_values.append(value)
 
             if not is_correlated and self._cache_enabled:
-                self._subquery_cache[cache_key] = result
+                self._subquery_cache[cache_key] = right_values
 
-        return not result if node.negated else result
+        if not right_values:
+            # Если подзапрос не вернул строк
+            if node.all_any == 'ALL':
+                return True  # ALL над пустым множеством = TRUE
+            else:  # ANY
+                return False  # ANY над пустым множеством = FALSE
+
+        # Вычисляем в зависимости от оператора
+        if node.all_any == 'ALL':
+            # ALL - все значения должны удовлетворять условию
+            if node.operator == '<':
+                return all(left_value < val for val in right_values)
+            elif node.operator == '<=':
+                return all(left_value <= val for val in right_values)
+            elif node.operator == '>':
+                return all(left_value > val for val in right_values)
+            elif node.operator == '>=':
+                return all(left_value >= val for val in right_values)
+            elif node.operator == '=':
+                return all(left_value == val for val in right_values)
+            elif node.operator in ('!=', '<>'):
+                return all(left_value != val for val in right_values)
+        else:  # ANY
+            # ANY - хотя бы одно значение должно удовлетворять условию
+            if node.operator == '<':
+                return any(left_value < val for val in right_values)
+            elif node.operator == '<=':
+                return any(left_value <= val for val in right_values)
+            elif node.operator == '>':
+                return any(left_value > val for val in right_values)
+            elif node.operator == '>=':
+                return any(left_value >= val for val in right_values)
+            elif node.operator == '=':
+                return any(left_value == val for val in right_values)
+            elif node.operator in ('!=', '<>'):
+                return any(left_value != val for val in right_values)
+
+        return False
 
     def _evaluate_in_subquery(self, node: InSubqueryNode) -> bool:
         left_value = self.evaluate(node.expr)
@@ -339,6 +464,9 @@ class ExpressionEvaluator:
         return not result if node.negated else result
 
     def _evaluate_scalar_subquery(self, node: ScalarSubqueryNode) -> Any:
+        if self._is_correlated(node.subquery):
+            ExpressionEvaluator._cache_enabled = False
+
         if ExpressionEvaluator._recursion_depth >= ExpressionEvaluator._max_depth:
             return None
 
@@ -346,19 +474,25 @@ class ExpressionEvaluator:
 
         try:
             from SQL_compiler.execution.executor import QueryExecutor
+
+            # Get tables from current context
             tables = getattr(self.row_context, 'tables', {})
+
+            # CRITICAL: Pass the CURRENT row_context as outer_context
+            # This allows the subquery to access outer query columns
             executor = QueryExecutor(tables, self.row_context)
             result_rows = executor.execute(node.subquery)
 
-            # Возвращаем список всех значений для коррелированных подзапросов
+            print(f"[DEBUG SCALAR] Subquery returned {len(result_rows)} rows")
+
             if result_rows:
-                values = []
-                for row in result_rows:
-                    if row:
-                        value = next(iter(row.values())) if row else None
-                        if value is not None:
-                            values.append(value)
-                return values if len(values) > 1 else (values[0] if values else None)
+                # Take the first value from the first row
+                first_row = result_rows[0]
+                if first_row:
+                    value = next(iter(first_row.values())) if first_row else None
+                    print(f"[DEBUG SCALAR] Returning value: {value}")
+                    return value
+            print(f"[DEBUG SCALAR] No rows, returning None")
             return None
         finally:
             ExpressionEvaluator._recursion_depth -= 1
@@ -388,7 +522,15 @@ class ExpressionEvaluator:
     def _evaluate_binop(self, node: BinOpNode) -> Any:
         left = self.evaluate(node.arg1)
         right = self.evaluate(node.arg2)
-
+        if isinstance(node.arg1, ScalarSubqueryNode):
+            left = self._evaluate_scalar_subquery(node.arg1)
+            right = self.evaluate(node.arg2)
+        elif isinstance(node.arg2, ScalarSubqueryNode):
+            left = self.evaluate(node.arg1)
+            right = self._evaluate_scalar_subquery(node.arg2)
+        else:
+            left = self.evaluate(node.arg1)
+            right = self.evaluate(node.arg2)
         # Обработка списка (результат подзапроса с несколькими строками)
         if isinstance(right, list):
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):

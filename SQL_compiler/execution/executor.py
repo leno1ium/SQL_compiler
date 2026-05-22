@@ -12,6 +12,7 @@ class QueryExecutor:
         self.outer_context = outer_context
         self.limit = None
         ExpressionEvaluator.clear_cache()
+        print(f"[DEBUG QueryExecutor] INIT: tables={list(tables.keys())}, outer_context={outer_context is not None}")
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
         # Обработка UNION
@@ -101,7 +102,9 @@ class QueryExecutor:
             from_node: FromNode,
             where_clause: Optional[AstNode],
     ) -> List[Dict[str, Any]]:
-        print(f"[DEBUG] _execute_from_and_joins: from_node={from_node}, where_clause={where_clause}")
+        print(f"[DEBUG _execute_from_and_joins] from_node={from_node}")
+        print(f"[DEBUG _execute_from_and_joins] where_clause={where_clause}")
+        print(f"[DEBUG _execute_from_and_joins] outer_context={self.outer_context}")
         if not from_node.tables:
             return []
 
@@ -119,7 +122,8 @@ class QueryExecutor:
                     current_rows = self._process_join(current_rows, join_node)
 
         elif isinstance(first_table_node, TableSubqueryNode):
-            current_rows = self._get_subquery_rows(first_table_node)
+            # Для подзапроса в FROM передаем outer_context
+            current_rows = self._get_subquery_rows(first_table_node, self.outer_context)
         else:
             current_rows = []
 
@@ -131,7 +135,7 @@ class QueryExecutor:
                 )
                 current_rows = self._cross_join(current_rows, right_rows)
             elif isinstance(table_node, TableSubqueryNode):
-                right_rows = self._get_subquery_rows(table_node)
+                right_rows = self._get_subquery_rows(table_node, self.outer_context)
                 current_rows = self._cross_join(current_rows, right_rows)
             elif isinstance(table_node, JoinNode):
                 current_rows = self._process_join(current_rows, table_node)
@@ -140,6 +144,8 @@ class QueryExecutor:
             filtered_rows = []
             for row in current_rows:
                 temp_table = self._create_temp_table(row)
+
+                # Create context for the outer query row
                 context = RowContext(temp_table, row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
@@ -147,14 +153,17 @@ class QueryExecutor:
                     if result is True:
                         filtered_rows.append(row)
                 except Exception as e:
+                    print(f"[DEBUG] WHERE error: {e}")
                     continue
             current_rows = filtered_rows
 
         return current_rows
 
-    def _get_subquery_rows(self, table_node: TableSubqueryNode) -> List[Dict[str, Any]]:
+    def _get_subquery_rows(self, table_node: TableSubqueryNode, outer_context: RowContext) -> List[Dict[str, Any]]:
+        print(f"[DEBUG] _get_subquery_rows called, outer_context={self.outer_context is not None}")
         try:
-            sub_executor = QueryExecutor(self.tables, self.outer_context)
+            # Pass the outer_context to the subquery executor
+            sub_executor = QueryExecutor(self.tables, outer_context)
             rows = sub_executor.execute(table_node.query)
         except Exception as e:
             print(f"Subquery error: {e}")
@@ -327,7 +336,11 @@ class QueryExecutor:
                 temp_table = self._create_temp_table({k: v for k, v in merged.items() if not k.startswith('__')})
                 if '__aliases__' in merged:
                     temp_table.aliases = merged['__aliases__']
-                context = RowContext(temp_table, merged, self.tables, self.outer_context)
+                parent_outer = self.outer_context
+                if isinstance(context := self.outer_context, RowContext):
+                    parent_outer = context.outer_context
+
+                context = RowContext(temp_table, merged, self.tables, parent_outer)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     cond_result = evaluator.evaluate(condition) if condition else True
@@ -346,6 +359,8 @@ class QueryExecutor:
         table = Table("temp")
         if '__aliases__' in row:
             table.aliases = row['__aliases__']
+        if hasattr(self, 'outer_context') and self.outer_context:
+            table.outer_context = self.outer_context
 
         for col, value in row.items():
             if col.startswith('__'):
@@ -369,7 +384,12 @@ class QueryExecutor:
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
 
-            context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
+            parent_outer = self.outer_context
+            if isinstance(context := self.outer_context, RowContext):
+                parent_outer = context.outer_context
+
+            context = RowContext(temp_table, clean_row, self.tables, parent_outer)
+            # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             selected_row = self._project_row(select_list, context)
             result_rows.append(selected_row)
         return result_rows
@@ -389,7 +409,13 @@ class QueryExecutor:
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
 
-            context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
+            parent_outer = self.outer_context
+            if isinstance(context := self.outer_context, RowContext):
+                parent_outer = context.outer_context
+
+            context = RowContext(temp_table, clean_row, self.tables, parent_outer)
+
+            # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             evaluator = ExpressionEvaluator(context)
 
             key_parts = []
@@ -567,7 +593,13 @@ class QueryExecutor:
                 if '__aliases__' in row:
                     temp_table.aliases = row['__aliases__']
 
-                context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
+                parent_outer = self.outer_context
+                if isinstance(context := self.outer_context, RowContext):
+                    parent_outer = context.outer_context
+
+                context = RowContext(temp_table, clean_row, self.tables, parent_outer)
+
+                # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     value = evaluator.evaluate(term.expr)
