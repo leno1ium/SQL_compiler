@@ -180,6 +180,19 @@ class SQLASTBuilder(Transformer):
             return BinOpNode(BinOp.LIKE, args[0], args[2])
         return args[0] if args else None
 
+    def select_qualified_all(self, args):
+        """Обработка table.* """
+        # args содержит ident и STAR
+        table_name = None
+        for arg in args:
+            if isinstance(arg, IdentNode):
+                table_name = arg.name
+            elif isinstance(arg, Token) and str(arg) == '*':
+                pass
+
+        if table_name:
+            return SelectItemNode(QualifiedStarNode(table_name), None)
+        return SelectItemNode(StarNode(), None)
     def between_expression(self, args):
         """Обработка BETWEEN выражения"""
         # args: [expr, NOT?, BETWEEN, low, AND, high]

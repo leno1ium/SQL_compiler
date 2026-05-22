@@ -203,6 +203,10 @@ class ExpressionEvaluator:
             return node.num
         elif isinstance(node, AllAnyNode):
             return self._evaluate_all_any(node)
+        elif isinstance(node, StarNode):
+            raise ValueError("StarNode can only be used in SELECT list")
+        elif isinstance(node, QualifiedStarNode):
+            raise ValueError("QualifiedStarNode can only be used in SELECT list")
         elif isinstance(node, StringNode):
             return self._parse_date_string(node.value)
         elif isinstance(node, BoolNode):

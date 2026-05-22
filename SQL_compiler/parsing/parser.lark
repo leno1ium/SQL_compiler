@@ -177,7 +177,10 @@ where_expr: expr -> where_expr
 select_list: select_item (COMMA select_item)* -> select_list
 
 select_item: expr (AS? ident)? -> select_item \
-           | STAR -> select_all
+           | STAR -> select_all \
+           | qualified_star -> select_qualified_all
+
+qualified_star: ident DOT STAR
 
 table_refs: table_ref (COMMA table_ref)* -> table_refs
 

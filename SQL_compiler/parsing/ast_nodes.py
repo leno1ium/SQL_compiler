@@ -93,6 +93,16 @@ class IdentNode(ExprNode):
         return self.name
 
 
+class QualifiedStarNode(ExprNode):
+    """Узел для table.* """
+    def __init__(self, table_name: str):
+        super().__init__()
+        self.table_name = table_name
+
+    def __str__(self) -> str:
+        return f"{self.table_name}.*"
+
+
 class CompoundIdentNode(ExprNode):
     def __init__(self, parts: List[str]):
         super().__init__()

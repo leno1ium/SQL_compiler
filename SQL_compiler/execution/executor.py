@@ -470,7 +470,19 @@ class QueryExecutor:
                                 row_dict[simple_name] = val
                                 seen_columns.add(simple_name)
                     continue
-
+                elif isinstance(item.expr, QualifiedStarNode):
+                    # table.*
+                    table_name = item.expr.table_name
+                    if group_rows:
+                        seen_columns = set()
+                        clean_row = {k: v for k, v in group_rows[0].items() if not k.startswith('__')}
+                        for col, val in clean_row.items():
+                            if col.startswith(f"{table_name}."):
+                                simple_name = col.split('.')[-1]
+                                if simple_name not in seen_columns:
+                                    row_dict[simple_name] = val
+                                    seen_columns.add(simple_name)
+                    continue
                 try:
                     value = evaluator.evaluate(item.expr)
 
@@ -520,6 +532,7 @@ class QueryExecutor:
 
         for item in select_list:
             if isinstance(item.expr, StarNode):
+                # Обычный SELECT *
                 seen_columns = set()
                 for col in context.table.column_names:
                     if col.startswith('__'):
@@ -528,6 +541,33 @@ class QueryExecutor:
                     if simple_name not in seen_columns:
                         result[simple_name] = context.get_value(col)
                         seen_columns.add(simple_name)
+                continue
+
+            elif isinstance(item.expr, QualifiedStarNode):
+                # SELECT table.*
+                table_name = item.expr.table_name
+                seen_columns = set()
+
+                for col in context.table.column_names:
+                    if col.startswith('__'):
+                        continue
+
+                    # Проверяем, принадлежит ли колонка указанной таблице
+                    if col.startswith(f"{table_name}."):
+                        simple_name = col.split('.')[-1]
+                        if simple_name not in seen_columns:
+                            result[simple_name] = context.get_value(col)
+                            seen_columns.add(simple_name)
+                    # Также проверяем алиасы
+                    elif hasattr(context.table, 'aliases'):
+                        aliases = context.table.aliases
+                        if table_name in aliases:
+                            actual_table = aliases[table_name]
+                            if col.startswith(f"{actual_table}."):
+                                simple_name = col.split('.')[-1]
+                                if simple_name not in seen_columns:
+                                    result[simple_name] = context.get_value(col)
+                                    seen_columns.add(simple_name)
                 continue
 
             try:
