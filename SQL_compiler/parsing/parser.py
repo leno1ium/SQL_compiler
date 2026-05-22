@@ -28,7 +28,12 @@ class SQLASTBuilder(Transformer):
         return [a for a in args if not isinstance(a, Token)]
 
     def num(self, args):
-        return NumNode(args[0])
+        token = str(args[0])
+        # Если число без десятичной точки - парсим как int
+        if '.' in token or 'e' in token.lower():
+            return NumNode(float(token))
+        else:
+            return NumNode(int(token))
 
     def string(self, args):
         return StringNode(args[0])

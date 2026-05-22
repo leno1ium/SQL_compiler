@@ -629,7 +629,17 @@ class ExpressionEvaluator:
             elif node.op == BinOp.MUL:
                 return left * right
             elif node.op == BinOp.DIV:
-                return left / right if right != 0 else float('inf')
+                print(f"[DEBUG DIV] {left} / {right}")
+                print(f"[DEBUG DIV] types: left={type(left)}, right={type(right)}")
+                if right == 0:
+                    return None
+                if isinstance(left, int) and isinstance(right, int):
+                    result = left // right
+                    print(f"[DEBUG DIV] Integer division: {result}")
+                    return result
+                result = left / right
+                print(f"[DEBUG DIV] Float division: {result}")
+                return result
             elif node.op == BinOp.REM:
                 return left % right
             elif node.op == BinOp.GT:

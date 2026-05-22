@@ -52,7 +52,10 @@ class StmtNode(AstNode):
 class NumNode(ValueNode):
     def __init__(self, num: float):
         super().__init__()
-        self.num = float(num)
+        if num == int(num) and '.' not in str(num):
+            self.num = int(num)
+        else:
+            self.num = float(num)
 
     def __str__(self) -> str:
         return str(self.num)
