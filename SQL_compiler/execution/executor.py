@@ -11,6 +11,7 @@ class QueryExecutor:
         self.tables = tables
         self.outer_context = outer_context
         self.limit = None
+        self.exists_mode = False  # Новый флаг
         ExpressionEvaluator.clear_cache()
         print(f"[DEBUG QueryExecutor] INIT: tables={list(tables.keys())}, outer_context={outer_context is not None}")
 
@@ -45,8 +46,15 @@ class QueryExecutor:
 
         source_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
 
+        if self.exists_mode and source_rows:
+            # Достаточно одной строки для EXISTS
+            return [source_rows[0]]
+
         if self.limit and len(source_rows) > self.limit:
             source_rows = source_rows[:self.limit]
+            # Для EXISTS - ранний выход
+            if self.exists_mode:
+                return source_rows
 
         # Определяем тип запроса
         if stmt.group_by:
@@ -144,14 +152,16 @@ class QueryExecutor:
             filtered_rows = []
             for row in current_rows:
                 temp_table = self._create_temp_table(row)
-
-                # Create context for the outer query row
                 context = RowContext(temp_table, row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     result = evaluator.evaluate(where_clause)
+                    print(f"[DEBUG WHERE] Row result: {result}")
                     if result is True:
                         filtered_rows.append(row)
+                        if self.exists_mode:
+                            print("[DEBUG WHERE] EXISTS mode - returning first match")
+                            return [row]
                 except Exception as e:
                     print(f"[DEBUG] WHERE error: {e}")
                     continue

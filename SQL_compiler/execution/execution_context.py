@@ -20,72 +20,58 @@ class RowContext:
         self._scalar_cache = {}
 
     def get_value(self, column_name: str) -> Any:
-        print(f"[DEBUG RowContext] Looking for '{column_name}'")
-        print(f"[DEBUG RowContext] Has outer_context: {self.outer_context is not None}")
-
-        # Normalize column name (remove extra dots)
         normalized_name = column_name.replace('...', '.').replace('..', '.')
-        print(f"[DEBUG RowContext] Normalized name: '{normalized_name}'")
 
-        # Direct match
+        # 1. Точное совпадение в текущей строке
         if normalized_name in self.row:
-            print(f"[DEBUG RowContext] Found exact match: {self.row[normalized_name]}")
             return self.row[normalized_name]
 
-        # Search with table prefix
+        # 2. Если есть префикс таблицы (S.UNIV_ID)
         if "." in normalized_name:
             parts = normalized_name.split(".")
             if len(parts) == 2:
                 table_alias, col = parts
 
-                # FIX: First try the exact alias.column combination
+                # Проверяем, есть ли такая таблица в текущем контексте
                 alias_key = f"{table_alias}.{col}"
-                if alias_key in self.row:
-                    print(f"[DEBUG RowContext] Found alias match: {self.row[alias_key]}")
-                    return self.row[alias_key]
 
-                # FIX: Don't do suffix matching for correlated queries
-                # Instead, check outer context first for specific alias references
-                # BEFORE falling back to suffix matching
+                # Если это ссылка на таблицу, которой нет в текущем подзапросе,
+                # сразу ищем во внешнем контексте
+                table_found = False
+                for key in self.row:
+                    if key.startswith(f"{table_alias}."):
+                        table_found = True
+                        break
 
-                # Check outer context for exact match
-                if self.outer_context:
+                if not table_found and self.outer_context:
+                    # Это коррелированная ссылка - ищем во внешнем контексте
                     value = self.outer_context.get_value(normalized_name)
                     if value is not None:
-                        print(f"[DEBUG RowContext] Found in outer context: {value}")
                         return value
 
-                # Only do suffix matching as last resort for current row
-                for key in self.row:
-                    if key.endswith(f".{col}"):
-                        value = self.row[key]
-                        print(f"[DEBUG RowContext] Found suffix match: {value}")
-                        if value is not None:
-                            return value
+                # Ищем в текущей строке
+                if alias_key in self.row:
+                    return self.row[alias_key]
 
-        # Search by base name
+        # 3. Поиск по базовому имени (без префикса)
         base_name = normalized_name.split(".")[-1]
-        if base_name in self.row:
-            print(f"[DEBUG RowContext] Found base_name '{base_name}': {self.row[base_name]}")
-            return self.row[base_name]
 
-        # CORRELATED SUBQUERY - search in outer context
+        # Сначала проверяем, нет ли конфликта имен
+        matching_keys = [k for k in self.row if k.endswith(f".{base_name}") or k == base_name]
+
+        if len(matching_keys) == 1 and matching_keys[0] in self.row:
+            return self.row[matching_keys[0]]
+
+        # Если несколько совпадений или нет совсем - ищем во внешнем контексте
         if self.outer_context:
-            print("[DEBUG] Checking outer_context.row =", self.outer_context.row if self.outer_context else None)
-
-            # Try the full column name first (e.g., 'u.univ_id')
             value = self.outer_context.get_value(column_name)
             if value is not None:
                 return value
 
-            # Try with just the column name (e.g., 'univ_id')
-            base_name = column_name.split('.')[-1]
-            if base_name != column_name:
-                value = self.outer_context.get_value(base_name)
-                if value is not None:
-                    return value
+            value = self.outer_context.get_value(base_name)
+            if value is not None:
+                return value
 
-        print(f"[DEBUG RowContext] Column '{column_name}' not found")
         return None
 
     def get_type(self, column_name: str) -> type:
@@ -252,6 +238,8 @@ class ExpressionEvaluator:
             return self._evaluate_exists(node)
         elif isinstance(node, ScalarSubqueryNode):
             return self._evaluate_scalar_subquery(node)
+        elif isinstance(node, AllAnyNode):
+            return self._evaluate_all_any(node)
         elif isinstance(node, UnionNode):
             from SQL_compiler.execution.executor import QueryExecutor
             tables = getattr(self.row_context, 'tables', {})
@@ -348,26 +336,36 @@ class ExpressionEvaluator:
         print(f"[DEBUG] Is correlated: {result}")
         return result
 
+    # В ExpressionEvaluator
     def _evaluate_exists(self, node: ExistsNode) -> bool:
         from SQL_compiler.execution.executor import QueryExecutor
 
-        print(f"[DEBUG EXISTS] ========== START ==========")
-        print(
-            f"[DEBUG EXISTS] Current row_context has outer_context: {self.row_context.outer_context is not None if self.row_context else False}")
+        print(f"\n[DEBUG EXISTS] ========== START ==========")
 
         tables = getattr(self.row_context, 'tables', {})
 
-        # ВАЖНО: передаем self.row_context как outer_context
+        # Диагностика текущего контекста
+        if self.row_context:
+            print(f"[DEBUG EXISTS] Current row: {self.row_context.row}")
+            print(f"[DEBUG EXISTS] Outer context: {self.row_context.outer_context is not None}")
+            if self.row_context.outer_context:
+                print(f"[DEBUG EXISTS] Outer row: {self.row_context.outer_context.row}")
+
         executor = QueryExecutor(tables, self.row_context)
         executor.limit = 1
+        executor.exists_mode = True
 
         try:
             subquery_rows = executor.execute(node.subquery)
             result = len(subquery_rows) > 0
+            print(f"[DEBUG EXISTS] Subquery returned {len(subquery_rows)} rows")
             print(f"[DEBUG EXISTS] Result: {result}")
+            print(f"[DEBUG EXISTS] ========== END ==========\n")
             return not result if node.negated else result
         except Exception as e:
             print(f"[DEBUG EXISTS] Error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _evaluate_all_any(self, node: AllAnyNode) -> bool:
@@ -536,46 +534,22 @@ class ExpressionEvaluator:
         return not result if node.negated else result
 
     def _evaluate_binop(self, node: BinOpNode) -> Any:
-        left = self.evaluate(node.arg1)
-        right = self.evaluate(node.arg2)
         if isinstance(node.arg1, ScalarSubqueryNode):
             left = self._evaluate_scalar_subquery(node.arg1)
-            right = self.evaluate(node.arg2)
-        elif isinstance(node.arg2, ScalarSubqueryNode):
-            left = self.evaluate(node.arg1)
-            right = self._evaluate_scalar_subquery(node.arg2)
+        elif isinstance(node.arg1, ExistsNode):
+            left = self._evaluate_exists(node.arg1)
         else:
             left = self.evaluate(node.arg1)
+
+            # Вычисляем arg2
+        if isinstance(node.arg2, ScalarSubqueryNode):
+            right = self._evaluate_scalar_subquery(node.arg2)
+        elif isinstance(node.arg2, ExistsNode):
+            right = self._evaluate_exists(node.arg2)
+        else:
             right = self.evaluate(node.arg2)
-        # Обработка списка (результат подзапроса с несколькими строками)
-        if isinstance(right, list):
-            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
-                # = ANY или IN - проверяем вхождение
-                if node.op == BinOp.EQ:
-                    return left in right
-                elif node.op in (BinOp.NE, BinOp.NE2):
-                    return left not in right
-            elif node.op in (BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
-                # Для сравнений >, < и т.д. - берем первый элемент
-                right = right[0] if right else None
-                if right is None:
-                    return None
-            else:
-                return None
 
-        # Обработка левой части как списка
-        if isinstance(left, list):
-            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
-                if node.op == BinOp.EQ:
-                    return right in left
-                elif node.op in (BinOp.NE, BinOp.NE2):
-                    return right not in left
-            else:
-                left = left[0] if left else None
-                if left is None:
-                    return None
-
-        # NULL handling - по SQL NULL в сравнениях дает NULL (False в WHERE)
+            # NULL handling
         if left is None or right is None:
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
                 return None
@@ -589,7 +563,33 @@ class ExpressionEvaluator:
                 return None
             return None
 
-        # Приведение типов для сравнения
+            # Обработка списка (результат подзапроса с несколькими строками)
+        if isinstance(right, list):
+            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
+                if node.op == BinOp.EQ:
+                    return left in right
+                elif node.op in (BinOp.NE, BinOp.NE2):
+                    return left not in right
+            elif node.op in (BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
+                right = right[0] if right else None
+                if right is None:
+                    return None
+            else:
+                return None
+
+            # Обработка левой части как списка
+        if isinstance(left, list):
+            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
+                if node.op == BinOp.EQ:
+                    return right in left
+                elif node.op in (BinOp.NE, BinOp.NE2):
+                    return right not in left
+            else:
+                left = left[0] if left else None
+                if left is None:
+                    return None
+
+            # Приведение типов для сравнения
         if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
             # Приводим строки к датам если нужно
             if isinstance(left, str) and isinstance(right, datetime):
@@ -609,18 +609,18 @@ class ExpressionEvaluator:
                 except ValueError:
                     pass
 
-        # Date comparison
+            # Date comparison
         if isinstance(left, datetime) and isinstance(right, datetime):
             return self._compare_dates(left, right, node.op)
 
-        # String comparison
+            # String comparison
         if isinstance(left, str) and isinstance(right, str):
             if node.op == BinOp.LIKE:
                 return self._evaluate_like(left, right)
             elif node.op == BinOp.NOT_LIKE:
                 return not self._evaluate_like(left, right)
 
-        # Numeric operations
+            # Numeric operations
         try:
             if node.op == BinOp.ADD:
                 return left + right
@@ -678,7 +678,10 @@ class ExpressionEvaluator:
         return re.match(f"^{pattern}$", value, re.IGNORECASE) is not None
 
     def _evaluate_unop(self, node: UnOpNode) -> Any:
-        arg = self.evaluate(node.arg)
+        if isinstance(node.arg, ExistsNode):
+            arg = self._evaluate_exists(node.arg)
+        else:
+            arg = self.evaluate(node.arg)
 
         if node.op == UnOp.NOT:
             return not arg if arg is not None else None
