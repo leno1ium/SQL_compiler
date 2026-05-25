@@ -132,27 +132,30 @@ def to_char(value: Any, format_str: str = None) -> str:
 
     if isinstance(value, datetime):
         if format_str:
-            # Преобразуем форматы Oracle в Python
+            # Поддержка русских названий месяцев для формата 'Mon'
+            months_ru = {
+                1: 'янв', 2: 'фев', 3: 'мар', 4: 'апр', 5: 'май', 6: 'июн',
+                7: 'июл', 8: 'авг', 9: 'сен', 10: 'окт', 11: 'ноя', 12: 'дек'
+            }
+            # Сначала заменим 'Mon' на русское сокращение месяца
+            if 'Mon' in format_str:
+                month_num = value.month
+                month_ru = months_ru[month_num]
+                format_str = format_str.replace('Mon', month_ru)
+
+            # Преобразуем формат Oracle в формат Python
             fmt = format_str
-            # Основные форматы
             fmt = fmt.replace('DD', '%d')
             fmt = fmt.replace('MM', '%m')
             fmt = fmt.replace('YYYY', '%Y')
             fmt = fmt.replace('YY', '%y')
-            fmt = fmt.replace('Mon', '%b')
-            fmt = fmt.replace('MON', '%b')
-            fmt = fmt.replace('DD.MM.YY', '%d.%m.%y')
-            fmt = fmt.replace('DD-Mon-YYYY', '%d-%b-%Y')
-            fmt = fmt.replace('DD-MM-YYYY', '%d-%m-%Y')
-            # Для формата 'DD-MM-YYYY' в SUBSTR
-            if 'DD-MM-YYYY' in fmt:
-                fmt = '%d-%m-%Y'
+            # Обработка DD.MM.YY и подобных
             return value.strftime(fmt)
         return value.strftime('%Y-%m-%d')
 
     if isinstance(value, (int, float)):
         if format_str:
-            # Для числовых форматов
+            # Простейшая обработка числовых форматов
             if '999' in format_str:
                 return str(int(value))
         return str(value)

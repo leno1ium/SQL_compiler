@@ -32,11 +32,8 @@ class RowContext:
             if len(parts) == 2:
                 table_alias, col = parts
 
-                # Проверяем, есть ли такая таблица в текущем контексте
                 alias_key = f"{table_alias}.{col}"
 
-                # Если это ссылка на таблицу, которой нет в текущем подзапросе,
-                # сразу ищем во внешнем контексте
                 table_found = False
                 for key in self.row:
                     if key.startswith(f"{table_alias}."):
@@ -44,25 +41,21 @@ class RowContext:
                         break
 
                 if not table_found and self.outer_context:
-                    # Это коррелированная ссылка - ищем во внешнем контексте
                     value = self.outer_context.get_value(normalized_name)
                     if value is not None:
                         return value
 
-                # Ищем в текущей строке
                 if alias_key in self.row:
                     return self.row[alias_key]
 
         # 3. Поиск по базовому имени (без префикса)
         base_name = normalized_name.split(".")[-1]
 
-        # Сначала проверяем, нет ли конфликта имен
         matching_keys = [k for k in self.row if k.endswith(f".{base_name}") or k == base_name]
 
         if len(matching_keys) == 1 and matching_keys[0] in self.row:
             return self.row[matching_keys[0]]
 
-        # Если несколько совпадений или нет совсем - ищем во внешнем контексте
         if self.outer_context:
             value = self.outer_context.get_value(column_name)
             if value is not None:
@@ -142,9 +135,10 @@ class GroupContext:
 
 class ExpressionEvaluator:
     _subquery_cache = {}
+    _correlated_cache = {}
     _cache_enabled = True
     _recursion_depth = 0
-    _max_depth = 3
+    _max_depth = 5
 
     def __init__(self, row_context: Optional[RowContext] = None, group_context: Optional[GroupContext] = None):
         self.row_context = row_context
@@ -152,53 +146,91 @@ class ExpressionEvaluator:
 
     @classmethod
     def clear_cache(cls):
-        cls._subquery_cache = {}
+        cls._subquery_cache.clear()
+        cls._correlated_cache.clear()
         cls._recursion_depth = 0
 
-    def _parse_date_string(self, value: str) -> Any:
-        """Преобразование строки в дату с поддержкой разных форматов"""
-        if not isinstance(value, str):
+    # ----------------------------------------------------------------------
+    # Универсальное преобразование в datetime
+    # ----------------------------------------------------------------------
+    def _to_datetime(self, value: Any) -> Any:
+        """Преобразует строку в datetime, если возможно, иначе возвращает исходное значение."""
+        if isinstance(value, datetime):
             return value
-
-        if len(value) >= 2 and value[0] in '\'"' and value[-1] in '\'"':
-            value = value[1:-1]
-
-        value = value.strip()
-
-        # Если уже в формате YYYY-MM-DD
-        if len(value) == 10 and value[4] == '-' and value[7] == '-':
-            try:
-                return datetime.strptime(value, "%Y-%m-%d")
-            except ValueError:
-                pass
-
-        # Все поддерживаемые форматы
-        formats = [
-            "%Y-%m-%d",  # 2000-01-10
-            "%d.%m.%Y",  # 10.01.2000
-            "%Y/%m/%d",  # 2000/01/10
-            "%d-%m-%Y",  # 10-01-2000
-            "%m/%d/%Y",  # 01/10/2000 (американский)
-            "%d/%m/%Y",  # 10/01/2000 (европейский)
-            "%d.%m.%y",  # 10.01.00
-            "%Y%m%d",  # 20000110
-        ]
-
-        for fmt in formats:
-            try:
-                return datetime.strptime(value, fmt)
-            except ValueError:
-                continue
-
+        if isinstance(value, str):
+            for fmt in [
+                "%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y",
+                "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y",
+                "%d-%m-%Y", "%Y%m%d"
+            ]:
+                try:
+                    return datetime.strptime(value, fmt)
+                except ValueError:
+                    continue
         return value
 
+    # ----------------------------------------------------------------------
+    # Вспомогательные методы для кэширования коррелированных подзапросов
+    # ----------------------------------------------------------------------
+    def _extract_correlation_columns(self, subquery: SelectStmtNode) -> List[str]:
+        outer_cols = set()
+        if not self.row_context:
+            return []
+        outer_row_keys = set(self.row_context.row.keys())
+        outer_base_names = {k.split('.')[-1] for k in outer_row_keys}
+
+        def find_outer(node):
+            if node is None:
+                return
+            if isinstance(node, IdentNode):
+                name = node.name
+                if name in outer_row_keys:
+                    outer_cols.add(name)
+                elif name in outer_base_names:
+                    for key in outer_row_keys:
+                        if key.endswith(f".{name}") or key == name:
+                            outer_cols.add(key)
+                            break
+            elif isinstance(node, CompoundIdentNode):
+                full = node.full_name
+                if full in outer_row_keys:
+                    outer_cols.add(full)
+            for child in node.childs:
+                find_outer(child)
+
+        find_outer(subquery.where_clause)
+        return list(outer_cols)
+
+    def _get_correlated_cache_key(self, subquery: SelectStmtNode) -> str:
+        if not self.row_context or not self.row_context.row:
+            return str(id(subquery))
+
+        outer_cols = self._extract_correlation_columns(subquery)
+        if not outer_cols:
+            outer_cols = [k for k in self.row_context.row.keys() if not k.startswith('__')]
+
+        key_parts = [str(id(subquery))]
+        for col in sorted(outer_cols):
+            val = self.row_context.get_value(col)
+            if val is None:
+                key_parts.append(f"{col}=None")
+            elif isinstance(val, datetime):
+                key_parts.append(f"{col}={val.isoformat()}")
+            else:
+                key_parts.append(f"{col}={str(val)}")
+        return '|'.join(key_parts)
+
+    def _parse_date_string(self, value: str) -> Any:
+        return self._to_datetime(value)
+
+    # ----------------------------------------------------------------------
+    # Основной метод evaluate
+    # ----------------------------------------------------------------------
     def evaluate(self, node: AstNode) -> Any:
         if node is None:
             return None
-
         if isinstance(node, list):
             return [self.evaluate(item) for item in node if item is not None]
-
         if isinstance(node, NumNode):
             return node.num
         elif isinstance(node, AllAnyNode):
@@ -208,7 +240,7 @@ class ExpressionEvaluator:
         elif isinstance(node, QualifiedStarNode):
             raise ValueError("QualifiedStarNode can only be used in SELECT list")
         elif isinstance(node, StringNode):
-            return self._parse_date_string(node.value)
+            return self._to_datetime(node.value)
         elif isinstance(node, BoolNode):
             return node.value
         elif isinstance(node, NullNode):
@@ -232,8 +264,6 @@ class ExpressionEvaluator:
             return not result if node.negated else result
         elif isinstance(node, FuncCallNode):
             return self._evaluate_function(node)
-        elif isinstance(node, StarNode):
-            raise ValueError("StarNode can only be used in SELECT list")
         elif isinstance(node, ConcatNode):
             left = self.evaluate(node.left) or ''
             right = self.evaluate(node.right) or ''
@@ -242,15 +272,12 @@ class ExpressionEvaluator:
             return self._evaluate_exists(node)
         elif isinstance(node, ScalarSubqueryNode):
             return self._evaluate_scalar_subquery(node)
-        elif isinstance(node, AllAnyNode):
-            return self._evaluate_all_any(node)
         elif isinstance(node, UnionNode):
             from SQL_compiler.execution.executor import QueryExecutor
             tables = getattr(self.row_context, 'tables', {})
             executor = QueryExecutor(tables, self.row_context)
             left_result = executor.execute(node.left)
             right_result = executor.execute(node.right)
-
             if node.all:
                 return left_result + right_result
             else:
@@ -265,19 +292,7 @@ class ExpressionEvaluator:
         else:
             raise ValueError(f"Unknown node type: {type(node)}")
 
-    def _union_unique(self, left: List[Dict], right: List[Dict]) -> List[Dict]:
-        seen = set()
-        result = []
-        for row in left + right:
-            row_tuple = tuple(sorted(row.items()))
-            if row_tuple not in seen:
-                seen.add(row_tuple)
-                result.append(row)
-        return result
-
     def _get_column_value(self, column_name: str) -> Any:
-        print(f"[DEBUG _get_column_value] column_name='{column_name}'")
-
         if self.row_context:
             return self.row_context.get_value(column_name)
         elif self.group_context and self.group_context.rows:
@@ -285,38 +300,16 @@ class ExpressionEvaluator:
         return None
 
     def _get_cache_key(self, subquery: SelectStmtNode) -> str:
-        """Генерация уникального ключа для кэша подзапроса"""
-        # Базовый ключ
-        key = str(id(subquery))
-
-        # Для коррелированных подзапросов добавляем хеш текущей строки
-        if self.row_context and self.row_context.row:
-            # Создаем хеш значений текущей строки
-            row_values = []
-            for col, val in sorted(self.row_context.row.items()):
-                if col.startswith('__'):
-                    continue
-                row_values.append(f"{col}={val}")
-            row_hash = hashlib.md5('|'.join(row_values).encode()).hexdigest()
-            key = f"{key}|{row_hash}"
-
-        return key
+        return str(id(subquery))
 
     def _is_correlated(self, subquery: SelectStmtNode) -> bool:
-        """Проверить, является ли подзапрос коррелированным"""
         if not self.row_context:
-            print(f"[DEBUG] No row_context, not correlated")
             return False
-
-        # Собираем имена колонок из внешней строки
         outer_columns = set()
         for key in self.row_context.row.keys():
             if not key.startswith('__'):
                 outer_columns.add(key.split('.')[-1])
 
-        print(f"[DEBUG] Outer columns: {outer_columns}")
-
-        # Проверяем, есть ли ссылки на внешние колонки в подзапросе
         def check_correlation(node):
             if node is None:
                 return False
@@ -324,10 +317,8 @@ class ExpressionEvaluator:
                 name = getattr(node, 'full_name', getattr(node, 'name', str(node)))
                 outer_full = set(self.row_context.row.keys())
                 outer_base = {k.split('.')[-1] for k in outer_full}
-
                 if name in outer_full:
                     return True
-
                 base_name = name.split('.')[-1]
                 if base_name in outer_base:
                     return True
@@ -335,25 +326,21 @@ class ExpressionEvaluator:
                 if check_correlation(child):
                     return True
             return False
+        return check_correlation(subquery)
 
-        result = check_correlation(subquery)
-        print(f"[DEBUG] Is correlated: {result}")
-        return result
-
-    # В ExpressionEvaluator
+    # ----------------------------------------------------------------------
+    # Обработка подзапросов с кэшированием
+    # ----------------------------------------------------------------------
     def _evaluate_exists(self, node: ExistsNode) -> bool:
         from SQL_compiler.execution.executor import QueryExecutor
 
-        print(f"\n[DEBUG EXISTS] ========== START ==========")
-
         tables = getattr(self.row_context, 'tables', {})
-
-        # Диагностика текущего контекста
-        if self.row_context:
-            print(f"[DEBUG EXISTS] Current row: {self.row_context.row}")
-            print(f"[DEBUG EXISTS] Outer context: {self.row_context.outer_context is not None}")
-            if self.row_context.outer_context:
-                print(f"[DEBUG EXISTS] Outer row: {self.row_context.outer_context.row}")
+        is_correlated = self._is_correlated(node.subquery)
+        cache_key = None
+        if is_correlated:
+            cache_key = self._get_correlated_cache_key(node.subquery)
+            if cache_key in self._correlated_cache:
+                return self._correlated_cache[cache_key]
 
         executor = QueryExecutor(tables, self.row_context)
         executor.limit = 1
@@ -362,63 +349,42 @@ class ExpressionEvaluator:
         try:
             subquery_rows = executor.execute(node.subquery)
             result = len(subquery_rows) > 0
-            print(f"[DEBUG EXISTS] Subquery returned {len(subquery_rows)} rows")
-            print(f"[DEBUG EXISTS] Result: {result}")
-            print(f"[DEBUG EXISTS] ========== END ==========\n")
-            return not result if node.negated else result
+            result = not result if node.negated else result
+            if is_correlated and cache_key:
+                self._correlated_cache[cache_key] = result
+            return result
         except Exception as e:
-            print(f"[DEBUG EXISTS] Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"EXISTS error: {e}")
             return False
 
     def _evaluate_all_any(self, node: AllAnyNode) -> bool:
-        """Вычисление ALL/ANY подзапроса"""
-        print(f"[DEBUG ALL_ANY] Evaluating: {node.expr} {node.operator} {node.all_any} (subquery)")
-
         left_value = self.evaluate(node.expr)
-        print(f"[DEBUG ALL_ANY] Left value: {left_value}")
-
-        # For correlated subqueries, don't use cache
         is_correlated = self._is_correlated(node.subquery)
-        cache_key = None if is_correlated else self._get_cache_key(node.subquery)
+        cache_key = None
+        if is_correlated:
+            cache_key = self._get_correlated_cache_key(node.subquery)
+            if cache_key in self._correlated_cache:
+                return self._correlated_cache[cache_key]
 
-        if not is_correlated and cache_key in self._subquery_cache:
-            right_values = self._subquery_cache[cache_key]
-            print(f"[DEBUG ALL_ANY] Using cached values: {right_values}")
+        if not is_correlated:
+            cache_key = self._get_cache_key(node.subquery)
+            if cache_key in self._subquery_cache:
+                right_values = self._subquery_cache[cache_key]
+            else:
+                right_values = self._execute_subquery_values(node.subquery)
+                if self._cache_enabled:
+                    self._subquery_cache[cache_key] = right_values
         else:
-            from SQL_compiler.execution.executor import QueryExecutor
-            tables = getattr(self.row_context, 'tables', {})
+            right_values = self._execute_subquery_values(node.subquery)
 
-            # Pass current context for correlated subqueries
-            executor = QueryExecutor(tables, self.row_context)
-            subquery_rows = executor.execute(node.subquery)
-
-            right_values = []
-            for row in subquery_rows:
-                if row:
-                    # Take the first value from each row
-                    value = next(iter(row.values())) if row else None
-                    if value is not None:
-                        right_values.append(value)
-
-            print(f"[DEBUG ALL_ANY] Subquery returned values: {right_values}")
-
-            if not is_correlated and self._cache_enabled:
-                self._subquery_cache[cache_key] = right_values
-
-        # Handle empty result set
         if not right_values:
-            # ALL over empty set = TRUE, ANY over empty set = FALSE
             result = node.all_any == 'ALL'
-            print(f"[DEBUG ALL_ANY] Empty set, result={result}")
+            if is_correlated and cache_key:
+                self._correlated_cache[cache_key] = result
             return result
 
-        # Evaluate based on operator and ALL/ANY
         operator = node.operator
-
         if node.all_any == 'ALL':
-            # ALL: all values must satisfy the condition
             if operator == '<':
                 result = all(left_value < val for val in right_values)
             elif operator == '<=':
@@ -433,8 +399,7 @@ class ExpressionEvaluator:
                 result = all(left_value != val for val in right_values)
             else:
                 result = False
-        else:  # ANY
-            # ANY: at least one value must satisfy the condition
+        else:
             if operator == '<':
                 result = any(left_value < val for val in right_values)
             elif operator == '<=':
@@ -450,93 +415,123 @@ class ExpressionEvaluator:
             else:
                 result = False
 
-        print(f"[DEBUG ALL_ANY] Result: {result}")
+        if is_correlated and cache_key:
+            self._correlated_cache[cache_key] = result
         return result
+
+    def _execute_subquery_values(self, subquery: SelectStmtNode) -> List[Any]:
+        from SQL_compiler.execution.executor import QueryExecutor
+        tables = getattr(self.row_context, 'tables', {})
+        executor = QueryExecutor(tables, self.row_context)
+        subquery_rows = executor.execute(subquery)
+        values = []
+        for row in subquery_rows:
+            if row:
+                value = next(iter(row.values())) if row else None
+                if value is not None:
+                    values.append(value)
+        return values
 
     def _evaluate_in_subquery(self, node: InSubqueryNode) -> bool:
         left_value = self.evaluate(node.expr)
-
-        # Для коррелированных подзапросов не используем кэш
         is_correlated = self._is_correlated(node.subquery)
-        cache_key = None if is_correlated else self._get_cache_key(node.subquery)
-
-        if not is_correlated and cache_key in self._subquery_cache:
-            right_set = self._subquery_cache[cache_key]
+        cache_key = None
+        if is_correlated:
+            cache_key = self._get_correlated_cache_key(node.subquery)
+            if cache_key in self._correlated_cache:
+                right_set = self._correlated_cache[cache_key]
+            else:
+                right_set = self._execute_subquery_set(node.subquery)
+                self._correlated_cache[cache_key] = right_set
         else:
-            from SQL_compiler.execution.executor import QueryExecutor
-            tables = getattr(self.row_context, 'tables', {})
-            executor = QueryExecutor(tables, self.row_context)
-            subquery_rows = executor.execute(node.subquery)
-
-            right_set = set()
-            for row in subquery_rows:
-                if row:
-                    value = next(iter(row.values())) if row else None
-                    if value is not None:
-                        right_set.add(value)
-
-            if not is_correlated and self._cache_enabled:
-                self._subquery_cache[cache_key] = right_set
+            cache_key = self._get_cache_key(node.subquery)
+            if cache_key in self._subquery_cache:
+                right_set = self._subquery_cache[cache_key]
+            else:
+                right_set = self._execute_subquery_set(node.subquery)
+                if self._cache_enabled:
+                    self._subquery_cache[cache_key] = right_set
 
         result = left_value in right_set
         return not result if node.negated else result
 
-    def _evaluate_scalar_subquery(self, node: ScalarSubqueryNode) -> Any:
-        if self._is_correlated(node.subquery):
-            ExpressionEvaluator._cache_enabled = False
+    def _execute_subquery_set(self, subquery: SelectStmtNode) -> set:
+        from SQL_compiler.execution.executor import QueryExecutor
+        tables = getattr(self.row_context, 'tables', {})
+        executor = QueryExecutor(tables, self.row_context)
+        subquery_rows = executor.execute(subquery)
+        result_set = set()
+        for row in subquery_rows:
+            if row:
+                value = next(iter(row.values())) if row else None
+                if value is not None:
+                    result_set.add(value)
+        return result_set
 
-        if ExpressionEvaluator._recursion_depth >= ExpressionEvaluator._max_depth:
+    def _evaluate_scalar_subquery(self, node: ScalarSubqueryNode) -> Any:
+        if self._recursion_depth >= self._max_depth:
             return None
 
-        ExpressionEvaluator._recursion_depth += 1
+        is_correlated = self._is_correlated(node.subquery)
+        cache_key = None
+        if is_correlated:
+            cache_key = self._get_correlated_cache_key(node.subquery)
+            if cache_key in self._correlated_cache:
+                return self._correlated_cache[cache_key]
+        else:
+            cache_key = self._get_cache_key(node.subquery)
+            if cache_key in self._subquery_cache:
+                return self._subquery_cache[cache_key]
 
+        self._recursion_depth += 1
         try:
             from SQL_compiler.execution.executor import QueryExecutor
-
-            # Get tables from current context
             tables = getattr(self.row_context, 'tables', {})
-
-            # CRITICAL: Pass the CURRENT row_context as outer_context
-            # This allows the subquery to access outer query columns
             executor = QueryExecutor(tables, self.row_context)
             result_rows = executor.execute(node.subquery)
-
-            print(f"[DEBUG SCALAR] Subquery returned {len(result_rows)} rows")
-
             if result_rows:
-                # Take the first value from the first row
                 first_row = result_rows[0]
-                if first_row:
-                    value = next(iter(first_row.values())) if first_row else None
-                    print(f"[DEBUG SCALAR] Returning value: {value}")
-                    return value
-            print(f"[DEBUG SCALAR] No rows, returning None")
-            return None
+                value = next(iter(first_row.values())) if first_row else None
+            else:
+                value = None
+
+            if is_correlated and cache_key:
+                self._correlated_cache[cache_key] = value
+            elif not is_correlated and self._cache_enabled:
+                self._subquery_cache[cache_key] = value
+            return value
         finally:
-            ExpressionEvaluator._recursion_depth -= 1
+            self._recursion_depth -= 1
 
-    def _evaluate_in(self, node: InNode) -> bool:
-        left_value = self.evaluate(node.expr)
-        for elem in node.elements:
-            if left_value == self.evaluate(elem):
-                return not node.negated
-        return node.negated
-
+    # ----------------------------------------------------------------------
+    # Обработка BETWEEN (исправлено)
+    # ----------------------------------------------------------------------
     def _evaluate_between(self, node: BetweenNode) -> bool:
-        value = self.evaluate(node.expr)
+        expr = self.evaluate(node.expr)
         low = self.evaluate(node.low)
         high = self.evaluate(node.high)
 
-        if value is None or low is None or high is None:
+        if isinstance(expr, datetime) or isinstance(low, datetime) or isinstance(high, datetime):
+            expr = self._to_datetime(expr)
+            low = self._to_datetime(low)
+            high = self._to_datetime(high)
+
+        if expr is None or low is None or high is None:
             return False
 
         try:
-            result = low <= value <= high
+            result = low <= expr <= high
         except TypeError:
-            result = False
+            try:
+                result = str(low) <= str(expr) <= str(high)
+            except:
+                result = False
 
         return not result if node.negated else result
 
+    # ----------------------------------------------------------------------
+    # Обработка бинарных операций (улучшено приведение дат)
+    # ----------------------------------------------------------------------
     def _evaluate_binop(self, node: BinOpNode) -> Any:
         if isinstance(node.arg1, ScalarSubqueryNode):
             left = self._evaluate_scalar_subquery(node.arg1)
@@ -545,7 +540,6 @@ class ExpressionEvaluator:
         else:
             left = self.evaluate(node.arg1)
 
-            # Вычисляем arg2
         if isinstance(node.arg2, ScalarSubqueryNode):
             right = self._evaluate_scalar_subquery(node.arg2)
         elif isinstance(node.arg2, ExistsNode):
@@ -553,7 +547,6 @@ class ExpressionEvaluator:
         else:
             right = self.evaluate(node.arg2)
 
-            # NULL handling
         if left is None or right is None:
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
                 return None
@@ -567,7 +560,6 @@ class ExpressionEvaluator:
                 return None
             return None
 
-            # Обработка списка (результат подзапроса с несколькими строками)
         if isinstance(right, list):
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
                 if node.op == BinOp.EQ:
@@ -581,7 +573,6 @@ class ExpressionEvaluator:
             else:
                 return None
 
-            # Обработка левой части как списка
         if isinstance(left, list):
             if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
                 if node.op == BinOp.EQ:
@@ -593,15 +584,18 @@ class ExpressionEvaluator:
                 if left is None:
                     return None
 
-            # Приведение типов для сравнения
+        # Приведение типов для сравнений
         if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
-            # Приводим строки к датам если нужно
-            if isinstance(left, str) and isinstance(right, datetime):
-                left = self._parse_date_string(left)
-            elif isinstance(right, str) and isinstance(left, datetime):
-                right = self._parse_date_string(right)
+            if isinstance(left, datetime) and isinstance(right, str):
+                right = self._to_datetime(right)
+            elif isinstance(right, datetime) and isinstance(left, str):
+                left = self._to_datetime(left)
+            elif isinstance(left, str) and isinstance(right, str):
+                left_dt = self._to_datetime(left)
+                right_dt = self._to_datetime(right)
+                if isinstance(left_dt, datetime) and isinstance(right_dt, datetime):
+                    left, right = left_dt, right_dt
 
-            # Приводим строки к числам если нужно
             if isinstance(left, str) and isinstance(right, (int, float)):
                 try:
                     left = float(left) if '.' in left else int(left)
@@ -613,18 +607,15 @@ class ExpressionEvaluator:
                 except ValueError:
                     pass
 
-            # Date comparison
         if isinstance(left, datetime) and isinstance(right, datetime):
             return self._compare_dates(left, right, node.op)
 
-            # String comparison
         if isinstance(left, str) and isinstance(right, str):
             if node.op == BinOp.LIKE:
                 return self._evaluate_like(left, right)
             elif node.op == BinOp.NOT_LIKE:
                 return not self._evaluate_like(left, right)
 
-            # Numeric operations
         try:
             if node.op == BinOp.ADD:
                 return left + right
@@ -633,17 +624,11 @@ class ExpressionEvaluator:
             elif node.op == BinOp.MUL:
                 return left * right
             elif node.op == BinOp.DIV:
-                print(f"[DEBUG DIV] {left} / {right}")
-                print(f"[DEBUG DIV] types: left={type(left)}, right={type(right)}")
                 if right == 0:
                     return None
                 if isinstance(left, int) and isinstance(right, int):
-                    result = left // right
-                    print(f"[DEBUG DIV] Integer division: {result}")
-                    return result
-                result = left / right
-                print(f"[DEBUG DIV] Float division: {result}")
-                return result
+                    return left // right
+                return left / right
             elif node.op == BinOp.REM:
                 return left % right
             elif node.op == BinOp.GT:
@@ -663,10 +648,14 @@ class ExpressionEvaluator:
             elif node.op == BinOp.OR:
                 return left or right
         except TypeError:
+            if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2):
+                return str(left) == str(right) if node.op == BinOp.EQ else str(left) != str(right)
             return None
-
         raise ValueError(f"Unknown operator: {node.op}")
 
+    # ----------------------------------------------------------------------
+    # Вспомогательные методы
+    # ----------------------------------------------------------------------
     def _compare_dates(self, left: datetime, right: datetime, op: BinOp) -> bool:
         if op == BinOp.EQ:
             return left == right
@@ -685,7 +674,6 @@ class ExpressionEvaluator:
     def _evaluate_like(self, value: str, pattern: str) -> bool:
         if not isinstance(value, str) or not isinstance(pattern, str):
             return False
-
         import re
         pattern = pattern.replace('%', '.*').replace('_', '.')
         pattern = re.escape(pattern).replace('\\.\\*', '.*').replace('\\.', '.')
@@ -696,7 +684,6 @@ class ExpressionEvaluator:
             arg = self._evaluate_exists(node.arg)
         else:
             arg = self.evaluate(node.arg)
-
         if node.op == UnOp.NOT:
             return not arg if arg is not None else None
         elif node.op == UnOp.PLUS:
@@ -704,6 +691,13 @@ class ExpressionEvaluator:
         elif node.op == UnOp.MINUS:
             return -arg if arg is not None else None
         return None
+
+    def _evaluate_in(self, node: InNode) -> bool:
+        left_value = self.evaluate(node.expr)
+        for elem in node.elements:
+            if left_value == self.evaluate(elem):
+                return not node.negated
+        return node.negated
 
     def _evaluate_function(self, node: FuncCallNode) -> Any:
         global FunctionManager
@@ -725,18 +719,13 @@ class ExpressionEvaluator:
             args.append(evaluated)
 
         try:
-            # Для SUBSTR с 2 или 3 аргументами
             if node.name.upper() == 'SUBSTR' and len(args) >= 2:
-                # Преобразуем start в int (1-индексация)
                 if args[1] is not None:
                     args[1] = int(args[1]) if isinstance(args[1], (int, float)) else 1
                 if len(args) >= 3 and args[2] is not None:
                     args[2] = int(args[2]) if isinstance(args[2], (int, float)) else None
-
-            # Для ROUND с отрицательными значениями
             if node.name.upper() == 'ROUND' and len(args) >= 2 and args[1] is not None:
                 args[1] = int(args[1])
-
             result = FunctionManager.call(node.name, *args)
             return result
         except ValueError as e:

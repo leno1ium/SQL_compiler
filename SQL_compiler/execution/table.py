@@ -234,9 +234,19 @@ class ExcelLoader:
                 return float(value)
 
             elif target_type == datetime:
-                # Только здесь изменяем - нормализуем дату
-                normalized = self._normalize_date(value)
-                return normalized if normalized != value else None
+                # Преобразуем в datetime объект, а не строку
+                if isinstance(value, (pd.Timestamp, datetime)):
+                    return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
+                if isinstance(value, str):
+                    for fmt in [
+                        "%Y-%m-%d", "%d.%m.%Y", "%Y/%m/%d", "%d-%m-%Y",
+                        "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%y", "%Y%m%d"
+                    ]:
+                        try:
+                            return datetime.strptime(value, fmt)
+                        except ValueError:
+                            continue
+                return None
 
             else:
                 return str(value)

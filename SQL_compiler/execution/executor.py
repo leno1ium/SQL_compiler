@@ -11,22 +11,15 @@ class QueryExecutor:
         self.tables = tables
         self.outer_context = outer_context
         self.limit = None
-        self.exists_mode = False  # Новый флаг
+        self.exists_mode = False
         ExpressionEvaluator.clear_cache()
-        print(f"[DEBUG QueryExecutor] INIT: tables={list(tables.keys())}, outer_context={outer_context is not None}")
 
     def execute(self, stmt: SelectStmtNode) -> List[Dict[str, Any]]:
-        # Обработка UNION
         if isinstance(stmt, UnionNode):
-            print(f"[DEBUG] Executing UnionNode, all={stmt.all}")
             left_result = self.execute(stmt.left)
             right_result = self.execute(stmt.right)
-            print(f"[DEBUG] Left: {len(left_result)} rows, Right: {len(right_result)} rows")
-
             if stmt.all:
-                result = left_result + right_result
-                print(f"[DEBUG] UNION ALL total: {len(result)} rows")
-                return result
+                return left_result + right_result
             else:
                 seen = set()
                 result = []
@@ -35,7 +28,6 @@ class QueryExecutor:
                     if row_tuple not in seen:
                         seen.add(row_tuple)
                         result.append(row)
-                print(f"[DEBUG] UNION unique total: {len(result)} rows")
                 return result
 
         if not isinstance(stmt, SelectStmtNode):
@@ -47,18 +39,14 @@ class QueryExecutor:
         source_rows = self._execute_from_and_joins(stmt.from_node, stmt.where_clause)
 
         if self.exists_mode and source_rows:
-            # Достаточно одной строки для EXISTS
             return [source_rows[0]]
 
         if self.limit and len(source_rows) > self.limit:
             source_rows = source_rows[:self.limit]
-            # Для EXISTS - ранний выход
             if self.exists_mode:
                 return source_rows
 
-        # Определяем тип запроса
         if stmt.group_by:
-            # Есть GROUP BY - группируем
             result_rows = self._execute_group_by(
                 source_rows,
                 stmt.group_by,
@@ -66,10 +54,8 @@ class QueryExecutor:
                 stmt.having_clause,
             )
         elif self._has_aggregate_functions(stmt.select_list):
-            # Нет GROUP BY, но есть агрегатные функции - одна строка результата
             result_rows = self._execute_aggregate_without_group_by(source_rows, stmt.select_list)
         else:
-            # Обычный SELECT
             if stmt.order_by:
                 source_rows = self._apply_order_by(source_rows, stmt.order_by)
             result_rows = self._execute_select(source_rows, stmt.select_list)
@@ -110,27 +96,20 @@ class QueryExecutor:
             from_node: FromNode,
             where_clause: Optional[AstNode],
     ) -> List[Dict[str, Any]]:
-        print(f"[DEBUG _execute_from_and_joins] from_node={from_node}")
-        print(f"[DEBUG _execute_from_and_joins] where_clause={where_clause}")
-        print(f"[DEBUG _execute_from_and_joins] outer_context={self.outer_context}")
         if not from_node.tables:
             return []
 
         first_table_node = from_node.tables[0]
-
         if isinstance(first_table_node, TableBaseNode):
             allow_unqualified = len(from_node.tables) == 1
             current_rows = self._get_table_rows_with_alias(
                 first_table_node,
                 allow_unqualified=allow_unqualified,
             )
-
             if hasattr(first_table_node, "joins") and first_table_node.joins:
                 for join_node in first_table_node.joins:
                     current_rows = self._process_join(current_rows, join_node)
-
         elif isinstance(first_table_node, TableSubqueryNode):
-            # Для подзапроса в FROM передаем outer_context
             current_rows = self._get_subquery_rows(first_table_node, self.outer_context)
         else:
             current_rows = []
@@ -156,23 +135,17 @@ class QueryExecutor:
                 evaluator = ExpressionEvaluator(context)
                 try:
                     result = evaluator.evaluate(where_clause)
-                    print(f"[DEBUG WHERE] Row result: {result}")
                     if result is True:
                         filtered_rows.append(row)
                         if self.exists_mode:
-                            print("[DEBUG WHERE] EXISTS mode - returning first match")
                             return [row]
                 except Exception as e:
-                    print(f"[DEBUG] WHERE error: {e}")
                     continue
             current_rows = filtered_rows
-
         return current_rows
 
     def _get_subquery_rows(self, table_node: TableSubqueryNode, outer_context: RowContext) -> List[Dict[str, Any]]:
-        print(f"[DEBUG] _get_subquery_rows called, outer_context={self.outer_context is not None}")
         try:
-            # Pass the outer_context to the subquery executor
             sub_executor = QueryExecutor(self.tables, outer_context)
             rows = sub_executor.execute(table_node.query)
         except Exception as e:
@@ -182,7 +155,6 @@ class QueryExecutor:
         alias = table_node.alias
         if not rows:
             return []
-
         result = []
         for row in rows:
             prefixed_row = {}
@@ -201,7 +173,6 @@ class QueryExecutor:
             return right_rows[:]
         if not right_rows:
             return left_rows[:]
-
         result = []
         for left_row in left_rows:
             for right_row in right_rows:
@@ -216,29 +187,21 @@ class QueryExecutor:
         table = self.tables.get(table_node.name)
         if table is None:
             return []
-
         alias = table_node.alias or table_node.name
         rows = []
-
         aliases = {alias: table.name}
         if alias != table.name:
             aliases[table.name] = table.name
-
         for row in table.rows:
             prefixed_row = {}
-
             for col, val in row.items():
                 prefixed_row[f"{alias}.{col}"] = val
-
                 if alias != table.name:
                     prefixed_row[f"{table.name}.{col}"] = val
-
                 if allow_unqualified:
                     prefixed_row[col] = val
-
             prefixed_row['__aliases__'] = aliases
             rows.append(prefixed_row)
-
         return rows
 
     def _collect_keys(self, rows: List[Dict[str, Any]]) -> List[str]:
@@ -254,21 +217,17 @@ class QueryExecutor:
     def _merge_rows(self, left_row: Dict[str, Any], right_row: Dict[str, Any]) -> Dict[str, Any]:
         merged = {k: v for k, v in left_row.items() if not k.startswith('__')}
         merged['__aliases__'] = left_row.get('__aliases__', {})
-
         for k, v in right_row.items():
             if not k.startswith('__') and k not in merged:
                 merged[k] = v
-
         if '__aliases__' in right_row:
             merged['__aliases__'].update(right_row['__aliases__'])
-
         return merged
 
     def _null_extended_row(self, base_row: Dict[str, Any], null_keys: List[str]) -> Dict[str, Any]:
         row = {k: v for k, v in base_row.items() if not k.startswith('__')}
         if '__aliases__' in base_row:
             row['__aliases__'] = base_row['__aliases__']
-
         for key in null_keys:
             if key not in row and not key.startswith('__'):
                 row[key] = None
@@ -282,14 +241,13 @@ class QueryExecutor:
             )
             right_null_keys = self._collect_keys(right_rows)
         elif isinstance(join_node.table, TableSubqueryNode):
-            right_rows = self._get_subquery_rows(join_node.table)
+            right_rows = self._get_subquery_rows(join_node.table, self.outer_context)
             right_null_keys = self._collect_keys(right_rows)
         else:
             right_rows = []
             right_null_keys = []
 
         join_type = join_node.join_type.upper().strip()
-
         if join_type in ("JOIN", "INNER", "INNER JOIN"):
             join_type = "INNER JOIN"
         elif join_type in ("LEFT", "LEFT JOIN", "LEFT OUTER JOIN"):
@@ -301,7 +259,6 @@ class QueryExecutor:
 
         if join_type == "CROSS JOIN":
             return self._cross_join(left_rows, right_rows)
-
         if join_type == "RIGHT JOIN":
             swapped = self._process_join_with_type(
                 right_rows,
@@ -311,7 +268,6 @@ class QueryExecutor:
                 self._collect_keys(left_rows),
             )
             return swapped
-
         return self._process_join_with_type(
             left_rows,
             right_rows,
@@ -330,17 +286,13 @@ class QueryExecutor:
     ) -> List[Dict[str, Any]]:
         if not left_rows:
             return []
-
         if not right_rows:
             if join_type == "LEFT JOIN":
                 return [self._null_extended_row(left_row, right_null_keys) for left_row in left_rows]
             return []
-
         result = []
-
         for left_row in left_rows:
             matched = False
-
             for right_row in right_rows:
                 merged = self._merge_rows(left_row, right_row)
                 temp_table = self._create_temp_table({k: v for k, v in merged.items() if not k.startswith('__')})
@@ -349,7 +301,6 @@ class QueryExecutor:
                 parent_outer = self.outer_context
                 if isinstance(context := self.outer_context, RowContext):
                     parent_outer = context.outer_context
-
                 context = RowContext(temp_table, merged, self.tables, parent_outer)
                 evaluator = ExpressionEvaluator(context)
                 try:
@@ -357,12 +308,10 @@ class QueryExecutor:
                     if cond_result is True:
                         matched = True
                         result.append(merged)
-                except Exception as e:
+                except Exception:
                     continue
-
             if join_type == "LEFT JOIN" and not matched:
                 result.append(self._null_extended_row(left_row, right_null_keys))
-
         return result
 
     def _create_temp_table(self, row: Dict[str, Any]) -> Table:
@@ -371,7 +320,6 @@ class QueryExecutor:
             table.aliases = row['__aliases__']
         if hasattr(self, 'outer_context') and self.outer_context:
             table.outer_context = self.outer_context
-
         for col, value in row.items():
             if col.startswith('__'):
                 continue
@@ -381,7 +329,6 @@ class QueryExecutor:
                 col_type = type(value)
             if col not in table.column_names:
                 table.add_column(col, col_type)
-
         clean_row = {k: v for k, v in row.items() if not k.startswith('__')}
         table.add_row(clean_row)
         return table
@@ -393,13 +340,10 @@ class QueryExecutor:
             temp_table = self._create_temp_table(clean_row)
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
-
             parent_outer = self.outer_context
             if isinstance(context := self.outer_context, RowContext):
                 parent_outer = context.outer_context
-
             context = RowContext(temp_table, clean_row, self.tables, parent_outer)
-            # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             selected_row = self._project_row(select_list, context)
             result_rows.append(selected_row)
         return result_rows
@@ -412,22 +356,16 @@ class QueryExecutor:
             having_clause: Optional[ExprNode],
     ) -> List[Dict[str, Any]]:
         groups = {}
-
         for row in rows:
             clean_row = {k: v for k, v in row.items() if not k.startswith('__')}
             temp_table = self._create_temp_table(clean_row)
             if '__aliases__' in row:
                 temp_table.aliases = row['__aliases__']
-
             parent_outer = self.outer_context
             if isinstance(context := self.outer_context, RowContext):
                 parent_outer = context.outer_context
-
             context = RowContext(temp_table, clean_row, self.tables, parent_outer)
-
-            # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
             evaluator = ExpressionEvaluator(context)
-
             key_parts = []
             for expr in group_by:
                 try:
@@ -437,26 +375,22 @@ class QueryExecutor:
                     elif isinstance(value, (list, dict)):
                         value = str(sorted(str(value)))
                     key_parts.append(value)
-                except Exception as e:
+                except Exception:
                     key_parts.append('___ERROR___')
-
             key = tuple(key_parts)
             groups.setdefault(key, []).append(row)
 
         result_rows = []
-
         for group_key, group_rows in groups.items():
             group_context = GroupContext(group_rows)
-
             if having_clause:
                 evaluator = ExpressionEvaluator(group_context=group_context)
                 try:
                     having_result = evaluator.evaluate(having_clause)
                     if not having_result:
                         continue
-                except Exception as e:
+                except Exception:
                     continue
-
             row_dict = {}
             evaluator = ExpressionEvaluator(group_context=group_context)
             for item in select_list:
@@ -471,7 +405,6 @@ class QueryExecutor:
                                 seen_columns.add(simple_name)
                     continue
                 elif isinstance(item.expr, QualifiedStarNode):
-                    # table.*
                     table_name = item.expr.table_name
                     if group_rows:
                         seen_columns = set()
@@ -485,7 +418,6 @@ class QueryExecutor:
                     continue
                 try:
                     value = evaluator.evaluate(item.expr)
-
                     if item.alias:
                         name = item.alias
                     elif isinstance(item.expr, FuncCallNode):
@@ -501,14 +433,11 @@ class QueryExecutor:
                         name = item.expr.full_name
                     else:
                         name = str(item.expr)
-
                     row_dict[name] = value
-                except Exception as e:
+                except Exception:
                     name = item.alias or str(item.expr)
                     row_dict[name] = None
-
             result_rows.append(row_dict)
-
         return result_rows
 
     def _extract_arg_name(self, arg) -> str:
@@ -516,7 +445,6 @@ class QueryExecutor:
             if not arg:
                 return "*"
             arg = arg[0]
-
         if isinstance(arg, IdentNode):
             return arg.name
         elif isinstance(arg, CompoundIdentNode):
@@ -529,10 +457,8 @@ class QueryExecutor:
     def _project_row(self, select_list: List[SelectItemNode], context: RowContext) -> Dict[str, Any]:
         result = {}
         evaluator = ExpressionEvaluator(context)
-
         for item in select_list:
             if isinstance(item.expr, StarNode):
-                # Обычный SELECT *
                 seen_columns = set()
                 for col in context.table.column_names:
                     if col.startswith('__'):
@@ -542,23 +468,17 @@ class QueryExecutor:
                         result[simple_name] = context.get_value(col)
                         seen_columns.add(simple_name)
                 continue
-
             elif isinstance(item.expr, QualifiedStarNode):
-                # SELECT table.*
                 table_name = item.expr.table_name
                 seen_columns = set()
-
                 for col in context.table.column_names:
                     if col.startswith('__'):
                         continue
-
-                    # Проверяем, принадлежит ли колонка указанной таблице
                     if col.startswith(f"{table_name}."):
                         simple_name = col.split('.')[-1]
                         if simple_name not in seen_columns:
                             result[simple_name] = context.get_value(col)
                             seen_columns.add(simple_name)
-                    # Также проверяем алиасы
                     elif hasattr(context.table, 'aliases'):
                         aliases = context.table.aliases
                         if table_name in aliases:
@@ -569,36 +489,14 @@ class QueryExecutor:
                                     result[simple_name] = context.get_value(col)
                                     seen_columns.add(simple_name)
                 continue
-
             try:
                 value = evaluator.evaluate(item.expr)
                 name = item.alias if item.alias else str(item.expr)
                 result[name] = value
-            except Exception as e:
+            except Exception:
                 name = item.alias or str(item.expr)
                 result[name] = None
-
         return result
-
-    def _execute_union(self, union_node: UnionNode) -> List[Dict[str, Any]]:
-        """Выполнение UNION запроса"""
-        left_result = self.execute(union_node.left)
-        right_result = self.execute(union_node.right)
-
-        if union_node.all:
-            # UNION ALL - просто объединяем
-            return left_result + right_result
-        else:
-            # UNION - уникальные строки
-            seen = set()
-            result = []
-            for row in left_result + right_result:
-                # Создаем ключ из всех значений строки
-                row_key = tuple(sorted((k, self._hashable_value(v)) for k, v in row.items()))
-                if row_key not in seen:
-                    seen.add(row_key)
-                    result.append(row)
-            return result
 
     def _apply_distinct(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         unique_rows = []
@@ -633,33 +531,25 @@ class QueryExecutor:
     def _apply_order_by(self, rows: List[Dict[str, Any]], order_by: List[OrderingTermNode]) -> List[Dict[str, Any]]:
         if not rows or not order_by:
             return rows
-
         sorted_rows = rows[:]
-
         for term in reversed(order_by):
             def key_func(row):
                 clean_row = {k: v for k, v in row.items() if not k.startswith('__')}
                 temp_table = self._create_temp_table(clean_row)
                 if '__aliases__' in row:
                     temp_table.aliases = row['__aliases__']
-
                 parent_outer = self.outer_context
                 if isinstance(context := self.outer_context, RowContext):
                     parent_outer = context.outer_context
-
                 context = RowContext(temp_table, clean_row, self.tables, parent_outer)
-
-                # context = RowContext(temp_table, clean_row, self.tables, self.outer_context)
                 evaluator = ExpressionEvaluator(context)
                 try:
                     value = evaluator.evaluate(term.expr)
                 except Exception:
                     value = None
                 return self._sort_key_value(value)
-
             reverse = str(term.direction).upper() == "DESC"
             sorted_rows = sorted(sorted_rows, key=key_func, reverse=reverse)
-
         return sorted_rows
 
     def _apply_limit_offset(
@@ -668,13 +558,11 @@ class QueryExecutor:
             limit_offset: LimitOffsetNode,
     ) -> List[Dict[str, Any]]:
         evaluator = ExpressionEvaluator(None)
-
         try:
             limit_val = evaluator.evaluate(limit_offset.limit)
             limit = int(limit_val) if limit_val is not None else len(rows)
         except Exception:
             limit = len(rows)
-
         offset = 0
         if limit_offset.offset is not None:
             try:
@@ -682,20 +570,17 @@ class QueryExecutor:
                 offset = int(offset_val) if offset_val is not None else 0
             except Exception:
                 offset = 0
-
         start = min(offset, len(rows))
         end = min(start + limit, len(rows))
         return rows[start:end]
 
     def _has_aggregate_functions(self, select_list: List[SelectItemNode]) -> bool:
-        """Проверить, есть ли агрегатные функции в SELECT списке"""
         for item in select_list:
             if self._contains_aggregate(item.expr):
                 return True
         return False
 
     def _contains_aggregate(self, node: AstNode) -> bool:
-        """Рекурсивно проверить наличие агрегатных функций"""
         if isinstance(node, FuncCallNode):
             if node.name.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX'):
                 return True
@@ -704,21 +589,15 @@ class QueryExecutor:
                 return True
         return False
 
-    def _execute_aggregate_without_group_by(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> \
-    List[Dict[str, Any]]:
-        """Выполнить запрос с агрегатными функциями без GROUP BY - возвращает одну строку"""
+    def _execute_aggregate_without_group_by(self, rows: List[Dict[str, Any]], select_list: List[SelectItemNode]) -> List[Dict[str, Any]]:
         if not rows:
             return []
-
-        # Создаем групповой контекст со ВСЕМИ строками
         group_context = GroupContext(rows)
         evaluator = ExpressionEvaluator(group_context=group_context)
-
         result_row = {}
         for item in select_list:
             if isinstance(item.expr, StarNode):
                 continue
-
             try:
                 value = evaluator.evaluate(item.expr)
                 if item.alias:
@@ -737,5 +616,4 @@ class QueryExecutor:
                 print(f"Ошибка при вычислении агрегата: {e}")
                 name = item.alias or str(item.expr)
                 result_row[name] = None
-
         return [result_row] if result_row else []
