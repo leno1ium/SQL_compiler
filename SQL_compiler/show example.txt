@@ -223,7 +223,20 @@ AND STUDENT_ID >= 1003);
 --ОТВЕТ: 1500 строк. Будет получен список всех студентов, кроме тех, у которых день рождения 10/03/1980 и их id больше или равен 1003 или стипендия больше 100 и их id больше или равен 1003.
 
 
-JOIN — Объединение таблиц
+--JOIN — Объединение таблиц
+SELECT U.UNIV_NAME, MAX(S.STIPEND)
+FROM UNIVERSITY U JOIN STUDENT S
+ON S.UNIV_ID = U.UNIV_ID
+WHERE U.RATING > 300
+GROUP BY U.UNIV_ID;
+--38 строк
+
+SELECT L.SURNAME
+FROM LECTURER L JOIN UNIVERSITY U
+ON L.UNIV_ID = U.UNIV_ID
+WHERE U.RATING < 250;
+--67 строк
+
 -- INNER JOIN (только совпадающие)
 SELECT users.username, orders.total
 FROM users
@@ -323,6 +336,16 @@ WHERE CITY IS NOT NULL AND NOT EXISTS (
 --выводится 1104 строк
 
 Объединение результатов (UNION)
+
+SELECT NAME, STUDENT_ID
+FROM STUDENT S
+WHERE S.CITY <> (
+    SELECT U.CITY
+    FROM UNIVERSITY U
+    WHERE U.UNIV_ID = S.UNIV_ID
+);
+--100 строк
+
 -- UNION (убирает дубликаты)
 SELECT name FROM customers
 UNION

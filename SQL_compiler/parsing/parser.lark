@@ -9,7 +9,7 @@
 %ignore WS
 %ignore SH_COMMENT
 
-COMMENT: "/*" /(.|\n|\r)+/ "*/"
+COMMENT: "--" /[^\n]/*
 %ignore COMMENT
 
 SELECT: "select"i
