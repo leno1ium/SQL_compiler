@@ -1,0 +1,373 @@
+Выборка (SELECT)
+-- Все столбцы
+--1.	Напишите запрос к таблице SUBJECT, выводящий для каждой ее
+--строки идентификатор (номер) предмета обучения, его наимено-
+--вание. семестр, в котором он читается, и количество отводимых
+--на него часов.
+select * from subject;
+--Выводит 14 строк
+
+-- Определенные столбцы
+--3.	Напишите запрос, выбирающий все данные из таблицы STUDENT,
+--расположив столбцы таблицы в следующем порядке: KURS.
+--SURNAME. NAME. STIPEND.
+select kurs, surname, name, stipend
+from student;
+--Выводит 5375 строк
+
+-- Уникальные значения
+--5.	Напишите запрос, позволяющий получить из таблицы
+--EXAM_MARKS значения столбца MARK (экзаменационная оценка)
+--для всех студентов, исключив из списка повторение одинаковых
+--строк
+select distinct mark
+from exam_marks;
+--Выводит 6 строк
+
+-- С условием
+--10.	Напишите запрос к таблице STUDENT для вывода списка всех
+--студентов со стипендией не меньше 100. живущих в Воронеже —
+--с указанием фамилии (SURNAME), имени (NAME) и номера курса
+--(KURS).
+select surname, name, kurs
+from student
+where (stipend >= 100 AND city = 'Воронеж');
+--Выводит 9 строк
+
+-- Сортировка
+--11.	Напишите запрос для определения количества предметов, изуча-
+--емых на каждом курсе.
+SELECT COUNT(SUBJ_NAME), (SEMESTER/3)+1
+FROM SUBJECT
+GROUP BY (SEMESTER/3)+1
+ORDER BY (SEMESTER/3)+1;
+--Выводится 2 строки
+
+--2.7.1.
+--1. Предположим, что стипендия всем студентам увеличена на 20%.
+--Напишите запрос к таблице STUDENT, выполняющий вывод номера
+--студента, его фамилии и величины увеличенной стипендии.
+-- Выходные данные упорядочите:
+--а) по значению последнего столбца (величине стипендии);
+SELECT STUDENT_ID, SURNAME, STIPEND+(STIPEND/5)
+FROM STUDENT
+ORDER BY STIPEND+(STIPEND/5);
+--б) в алфавитном порядке фамилий студентов.
+SELECT STUDENT_ID, SURNAME, STIPEND+(STIPEND/5)
+FROM STUDENT
+ORDER BY SURNAME;
+--Выводится 5375 строк
+
+--2.7.3.
+--3.	Напишите запрос, выполняющий вывод списка предметов
+--обучения в порядке а) убывания семестров и б) возрастания количества
+--отводимых на предмет часов. Поле семестра в выходных данных должно
+--быть первым, за ним должны следовать имя предмета обучения
+--и идентификатор предмета.
+--а)
+SELECT SEMESTER, SUBJ_NAME, SUBJ_ID
+FROM SUBJECT
+ORDER BY SEMESTER DESC;
+--б)
+SELECT SEMESTER, SUBJ_NAME, SUBJ_ID
+FROM SUBJECT
+ORDER BY HOUR ASC;
+--Выводится 14 строк
+
+--2.7.4.
+--4.	Напишите запрос, который для каждой даты сдачи экзаменов
+--выполняет вывод суммы баллов всех студентов и представляет
+--результаты в порядке убывания этих сумм.
+SELECT EXAM_DATE, SUM(MARK)
+FROM EXAM_MARKS
+GROUP BY EXAM_DATE
+ORDER BY SUM(MARK) DESC;
+--Выводится 180 строк
+
+-- Лимит
+--2.4.5
+--5.	Напишите запрос, выполняющий вывод первой по алфавиту фа-
+--милии студента, начинающейся на букву 'И'.
+SELECT SURNAME
+FROM STUDENT
+WHERE SURNAME LIKE 'И%'
+ORDER BY SURNAME ASC LIMIT 1;
+--Выводится 1 строка.
+--Иваненко
+
+-- Агрегатные функции
+--1. Напишите запрос для подсчета количества студентов,
+--сдававших экзамен по предмету обучения с идентификатором 20.
+SELECT COUNT(*)
+FROM EXAM_MARKS
+WHERE SUBJ_ID = 5;
+--1674 строки.
+
+--2.4.21.
+--21.	Для каждого дня сдачи экзаменов напишите запрос, выводящий
+--среднее значение всех экзаменационных оценок.
+SELECT AVG(MARK), EXAM_DATE
+FROM EXAM_MARKS
+GROUP BY EXAM_DATE;
+--Выводится 180 строк
+
+--2.4.19.
+--19.	Для каждого университета напишите запрос, выводящий сумму
+--стипендии, выплачиваемой студентам каждого курса.
+SELECT UNIV_ID, SUM(STIPEND), KURS
+FROM STUDENT
+GROUP BY UNIV_ID, KURS
+ORDER BY KURS;
+--Выводится 395 строк
+
+--2.4.3.
+-- 3.	Напишите запрос, который для каждого студента выполняет вы-
+--борку его идентификатора и минимальной из полученных им оценок.
+SELECT STUDENT_ID, MIN(MARK)
+FROM EXAM_MARKS
+GROUP BY STUDENT_ID;
+--Выводится 5368 строк
+
+SELECT EXAM_DATE, MAX(MARK)
+FROM EXAM_MARKS
+GROUP BY EXAM_DATE
+ORDER BY MAX(MARK) DESC;
+--Выводится 180 строк
+
+-- Группировка
+--2.4.27.
+--27.	Напишите запрос, выполняющий вывод количества
+--студентов, имеющих только отличные оценки.
+SELECT STUDENT_ID, MIN(MARK)
+FROM EXAM_MARKS
+GROUP BY STUDENT_ID
+HAVING MIN(MARK) = 5;
+--Выводится 149 строк
+
+Условия и фильтрация
+-- Операторы: =, <>, >, <, >=, <=
+--2.9.3
+--Напишите запрос для получения списка преподавателей, работа-
+--ющих не в своем городе, с последующей сортировкой по иденти-
+--фикаторам университетов и городам проживания преподавателей.
+SELECT *
+FROM LECTURER
+WHERE CITY <>
+(SELECT CITY FROM UNIVERSITY WHERE UNIV_ID = LECTURER.UNIV_ID)
+ORDER BY UNIV_ID, CITY;
+--выводится 290 строк
+
+--13. Напишите запрос для получения списка предметов, по кото-
+--рым на экзаменах получена хотя бы одна неудовлетворительная
+--оценка.
+SELECT *
+FROM SUBJECT S
+WHERE EXISTS (
+    SELECT *
+    FROM EXAM_MARKS M
+    WHERE M.SUBJ_ID = S.SUBJ_ID AND M.MARK < 3
+);
+--выводится 14 строк
+
+-- BETWEEN
+SELECT SUBJ_ID
+FROM EXAM_MARKS
+WHERE EXAM_DATE BETWEEN '10/01/2000' AND '20/01/2000';
+--Выводится 1422 строк
+
+-- IN
+--2.2.2.
+--2.	Напишите запрос, выбирающий данные обо всех предметах обу-
+--чения, экзамены по которым сданы студентами, имеющими иден-
+--тификаторы 12 и 32.
+SELECT *
+FROM EXAM_MARKS
+WHERE STUDENT_ID IN (12,32);
+--Выводится 11 строк
+
+-- LIKE
+--2.2.11.
+--11.	Напишите запрос для получения списка студентов, фамилии ко-
+--торых начинаются на 'Ков' или на 'Куз'.
+SELECT *
+FROM STUDENT
+WHERE (SURNAME LIKE 'Ков%') OR (SURNAME LIKE 'Куз%');
+--Выводится 62 строк
+
+-- IS NULL / IS NOT NULL
+--2.2.5.
+-- 5.	Напишите запрос для выбора из таблицы EXAM_MARKS записей,
+--для которых отсутствуют значения оценок (поле MARK).
+SELECT *
+FROM EXAM_MARKS
+WHERE MARK IS NULL;
+--Выводится 23 строк
+
+
+--2.2.6.
+--6.	Напишите запрос, выполняющий вывод из таблицы EXAM_MARKS записей,
+--для которых в поле MARK проставлены значения оценок.
+SELECT *
+FROM EXAM_MARKS
+WHERE MARK IS NOT NULL;
+--Выводится 24065 строк
+
+-- AND / OR / NOT
+--2.1.12.
+--12.	Какие данные будут получены в результате выполнения запроса?
+SELECT *
+FROM STUDENT
+WHERE NOT ((BIRTHDAY = '10/03/1980' OR
+STIPEND > 100)
+AND STUDENT_ID >= 1003);
+--ОТВЕТ: 1500 строк. Будет получен список всех студентов, кроме тех, у которых день рождения 10/03/1980 и их id больше или равен 1003 или стипендия больше 100 и их id больше или равен 1003.
+
+
+JOIN — Объединение таблиц
+-- INNER JOIN (только совпадающие)
+SELECT users.username, orders.total
+FROM users
+INNER JOIN orders ON users.id = orders.user_id;
+
+-- LEFT JOIN (все из левой, NULL если нет справа)
+SELECT users.username, orders.total
+FROM users
+LEFT JOIN orders ON users.id = orders.user_id;
+
+-- RIGHT JOIN (все из правой)
+SELECT users.username, orders.total
+FROM users
+RIGHT JOIN orders ON users.id = orders.user_id;
+
+-- FULL OUTER JOIN (все из обеих)
+SELECT * FROM users
+FULL OUTER JOIN orders ON users.id = orders.user_id;
+
+-- CROSS JOIN (декартово произведение)
+SELECT * FROM users CROSS JOIN products;
+
+--2.10.7
+--Напишите два запроса, которые позволяют вывести имена и
+--идентификаторы всех студентов, о которых точно известно, что
+--они проживают не в том городе, где расположен их университет:
+--один запрос с использованием связанного подзапроса, а другой —
+--с использованием соединения.
+SELECT NAME, STUDENT_ID
+FROM STUDENT S
+WHERE S.CITY <> (
+    SELECT U.CITY
+    FROM UNIVERSITY U
+    WHERE U.UNIV_ID = S.UNIV_ID
+);
+--выводится 4312 строк
+--с использованием соединения.
+SELECT DISTINCT S.NAME, S.STUDENT_ID
+FROM STUDENT S, UNIVERSITY U
+WHERE S.UNIV_ID = U.UNIV_ID
+AND S.CITY <> U.CITY;
+SELECT S.NAME, S.STUDENT_ID
+FROM STUDENT S
+JOIN UNIVERSITY U ON S.UNIV_ID = U.UNIV_ID
+WHERE S.CITY <> U.CITY;
+--выводится 4312 строк
+
+Подзапросы (Subqueries)
+-- В WHERE
+--2.8.1.
+--1.	Напишите запрос, выводящий список студентов, получающих
+--максимальную стипендию, отсортировав его в алфавитном поряд-
+--ке по фамилиям.
+SELECT *
+FROM STUDENT
+WHERE STIPEND = (SELECT MAX(STIPEND) FROM STUDENT)
+ORDER BY SURNAME;
+----выводится 34 строки
+
+-- В SELECT
+--2.9.7
+--Напишите запрос для получения списка университетов, в кото-
+--рых учится более 50 студентов, с последующей сортировкой по
+--рейтингам.
+SELECT *
+FROM UNIVERSITY U
+WHERE
+(SELECT COUNT(*) FROM STUDENT S WHERE S.UNIV_ID = U.UNIV_ID) > 50
+ORDER BY U.RATING;
+--выводится 69 строк
+
+-- EXISTS
+--1.
+--Использование оператора EXISTS
+Напишите запрос с EXISTS, позволяющий вывести данные обо
+--всех студентах обучающихся в вузах, имеющих рейтинг выше
+--300.
+SELECT *
+FROM STUDENT S
+WHERE EXISTS (
+    SELECT *
+    FROM UNIVERSITY V
+    WHERE V.UNIV_ID = S.UNIV_ID AND V.RATING > 300
+);
+
+--выводится 2103 строк
+
+--6. Напишите запрос для получения списка городов проживания
+--студентов, в которых нет ни одного университета.
+SELECT DISTINCT CITY
+FROM STUDENT S
+WHERE CITY IS NOT NULL AND NOT EXISTS (
+    SELECT *
+    FROM UNIVERSITY U
+    WHERE U.CITY = S.CITY
+);
+--выводится 1104 строк
+
+Объединение результатов (UNION)
+-- UNION (убирает дубликаты)
+SELECT name FROM customers
+UNION
+SELECT name FROM suppliers;
+
+-- UNION ALL (сохраняет дубликаты)
+SELECT name FROM customers
+UNION ALL
+SELECT name FROM suppliers;
+
+Часто используемые функции
+Строковые
+sql
+CONCAT(first_name, ' ', last_name)   -- объединение
+LENGTH(str)                          -- длина
+UPPER(str), LOWER(str)               -- регистр
+TRIM(str)                            -- удалить пробелы
+SUBSTRING(str, 1, 5)                 -- подстрока
+
+--2.3.1.
+--1.	Составьте запрос для таблицы STUDENT таким образом, чтобы
+--выходная таблица содержала один столбец, содержащий после-
+--довательность разделенных символом ";" (точка с запятой) зна-
+--чений всех столбцов этой таблицы; при этом текстовые значения
+--должны отображаться прописными символами (верхний регистр),
+--т.е. быть представленными в следующем виде:
+--10; КУЗНЕЦОВ; БОРИС; 0; БРЯНСК; 8.12.1987; 10.
+SELECT STUDENT_ID || '; ' || UPPER(SURNAME) || '; ' || UPPER(NAME) || '; ' || STIPEND || '; ' || KURS || '; ' || UPPER(CITY) || '; ' || TO_CHAR(BIRTHDAY, 'DD.MM.YY') || '; ' || UNIV_ID || '.'
+FROM STUDENT;
+--Выводится 5375 строк
+
+--2.3.3.
+--3.	Составьте запрос для таблицы STUDENT таким образом, что-
+--бы выходная таблица содержала всего один столбец в сле-
+--дующем виде: б.кузнецов; место жительства - брянск; родился: 8-дек-1987.
+SELECT LOWER(SUBSTR(NAME, 1, 1)) || '.' || LOWER(SURNAME) || '; ' || 'место жительства - ' || LOWER(CITY) || '; ' || 'родился: ' || TO_CHAR(BIRTHDAY, 'DD-Mon-YYYY') || '.'
+FROM STUDENT;
+--Выводится 5375 строк
+
+Числовые
+sql
+ROUND(price, 2)                      -- округление
+--2.3.8.
+--8.	То же, что и в упр. 7, но значения рейтинга требуется округлить
+-- до первого знака (например, значение 382 округляется до 400).
+SELECT 'Код-' || UNIV_ID || '; ' || UNIV_NAME || '-г .' || UPPER(CITY) || '; ' || 'Рейтинг=' || ROUND(RATING, -2) || '.'
+FROM UNIVERSITY;
+--Выводится 100 строк
