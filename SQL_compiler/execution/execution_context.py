@@ -514,9 +514,6 @@ class ExpressionEvaluator:
 
         return not result if node.negated else result
 
-    # ----------------------------------------------------------------------
-    # Обработка бинарных операций (улучшено приведение дат)
-    # ----------------------------------------------------------------------
     def _evaluate_binop(self, node: BinOpNode) -> Any:
         if isinstance(node.arg1, ScalarSubqueryNode):
             left = self._evaluate_scalar_subquery(node.arg1)
