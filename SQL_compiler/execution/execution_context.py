@@ -150,9 +150,6 @@ class ExpressionEvaluator:
         cls._correlated_cache.clear()
         cls._recursion_depth = 0
 
-    # ----------------------------------------------------------------------
-    # Универсальное преобразование в datetime
-    # ----------------------------------------------------------------------
     def _to_datetime(self, value: Any) -> Any:
         """Преобразует строку в datetime, если возможно, иначе возвращает исходное значение."""
         if isinstance(value, datetime):
@@ -169,9 +166,6 @@ class ExpressionEvaluator:
                     continue
         return value
 
-    # ----------------------------------------------------------------------
-    # Вспомогательные методы для кэширования коррелированных подзапросов
-    # ----------------------------------------------------------------------
     def _extract_correlation_columns(self, subquery: SelectStmtNode) -> List[str]:
         outer_cols = set()
         if not self.row_context:
@@ -223,9 +217,6 @@ class ExpressionEvaluator:
     def _parse_date_string(self, value: str) -> Any:
         return self._to_datetime(value)
 
-    # ----------------------------------------------------------------------
-    # Основной метод evaluate
-    # ----------------------------------------------------------------------
     def evaluate(self, node: AstNode) -> Any:
         if node is None:
             return None
@@ -328,9 +319,6 @@ class ExpressionEvaluator:
             return False
         return check_correlation(subquery)
 
-    # ----------------------------------------------------------------------
-    # Обработка подзапросов с кэшированием
-    # ----------------------------------------------------------------------
     def _evaluate_exists(self, node: ExistsNode) -> bool:
         from SQL_compiler.execution.executor import QueryExecutor
 
@@ -503,9 +491,6 @@ class ExpressionEvaluator:
         finally:
             self._recursion_depth -= 1
 
-    # ----------------------------------------------------------------------
-    # Обработка BETWEEN (исправлено)
-    # ----------------------------------------------------------------------
     def _evaluate_between(self, node: BetweenNode) -> bool:
         expr = self.evaluate(node.expr)
         low = self.evaluate(node.low)
@@ -653,9 +638,6 @@ class ExpressionEvaluator:
             return None
         raise ValueError(f"Unknown operator: {node.op}")
 
-    # ----------------------------------------------------------------------
-    # Вспомогательные методы
-    # ----------------------------------------------------------------------
     def _compare_dates(self, left: datetime, right: datetime, op: BinOp) -> bool:
         if op == BinOp.EQ:
             return left == right

@@ -126,36 +126,32 @@ def max_(values: List, distinct: bool = False) -> Any:
 
 # Скалярные функции
 def to_char(value: Any, format_str: str = None) -> str:
-    """Форматирование даты или числа в строку (аналог Oracle TO_CHAR)"""
     if value is None:
         return ''
 
     if isinstance(value, datetime):
         if format_str:
-            # Поддержка русских названий месяцев для формата 'Mon'
+
             months_ru = {
                 1: 'янв', 2: 'фев', 3: 'мар', 4: 'апр', 5: 'май', 6: 'июн',
                 7: 'июл', 8: 'авг', 9: 'сен', 10: 'окт', 11: 'ноя', 12: 'дек'
             }
-            # Сначала заменим 'Mon' на русское сокращение месяца
+
             if 'Mon' in format_str:
                 month_num = value.month
                 month_ru = months_ru[month_num]
                 format_str = format_str.replace('Mon', month_ru)
 
-            # Преобразуем формат Oracle в формат Python
             fmt = format_str
             fmt = fmt.replace('DD', '%d')
             fmt = fmt.replace('MM', '%m')
             fmt = fmt.replace('YYYY', '%Y')
             fmt = fmt.replace('YY', '%y')
-            # Обработка DD.MM.YY и подобных
             return value.strftime(fmt)
         return value.strftime('%Y-%m-%d')
 
     if isinstance(value, (int, float)):
         if format_str:
-            # Простейшая обработка числовых форматов
             if '999' in format_str:
                 return str(int(value))
         return str(value)
@@ -163,7 +159,6 @@ def to_char(value: Any, format_str: str = None) -> str:
     return str(value)
 
 def substr(value: Any, start: int, length: int = None) -> str:
-    """Извлечение подстроки (1-индексация, как в Oracle)"""
     if value is None:
         return ''
 
@@ -180,13 +175,11 @@ def substr(value: Any, start: int, length: int = None) -> str:
 
 
 def round_func(value: Any, decimals: int = 0) -> float:
-    """Округление числа"""
     if value is None:
         return 0
     try:
         num = float(value)
         if decimals < 0:
-            # Округление до десятков, сотен и т.д.
             factor = 10 ** (-decimals)
             return round(num / factor) * factor
         return round(num, decimals)
@@ -195,28 +188,24 @@ def round_func(value: Any, decimals: int = 0) -> float:
 
 
 def upper_func(value: Any) -> str:
-    """Преобразование в верхний регистр"""
     if value is None:
         return ''
     return str(value).upper()
 
 
 def lower_func(value: Any) -> str:
-    """Преобразование в нижний регистр"""
     if value is None:
         return ''
     return str(value).lower()
 
 
 def length_func(value: Any) -> int:
-    """Длина строки"""
     if value is None:
         return 0
     return len(str(value))
 
 
 def trim_func(value: Any) -> str:
-    """Удаление пробелов"""
     if value is None:
         return ''
     return str(value).strip()
