@@ -47,7 +47,6 @@ class FunctionManager:
         raise ValueError(f"Unknown aggregate function: {name}")
 
 
-# Агрегатные функции
 def count(values: List, distinct: bool = False) -> int:
     if distinct:
         seen = set()
@@ -124,7 +123,6 @@ def max_(values: List, distinct: bool = False) -> Any:
     return max(valid) if valid else None
 
 
-# Скалярные функции
 def to_char(value: Any, format_str: str = None) -> str:
     if value is None:
         return ''
@@ -148,7 +146,7 @@ def to_char(value: Any, format_str: str = None) -> str:
             fmt = fmt.replace('YYYY', '%Y')
             fmt = fmt.replace('YY', '%y')
             return value.strftime(fmt)
-        return value.strftime('%Y-%m-%d')
+        return value.strftime('%d-%m-%Y')
 
     if isinstance(value, (int, float)):
         if format_str:
@@ -163,7 +161,6 @@ def substr(value: Any, start: int, length: int = None) -> str:
         return ''
 
     str_value = str(value)
-    # Конвертируем 1-индексацию в 0-индексацию
     start_idx = start - 1 if start > 0 else start
 
     if start_idx < 0:
@@ -212,7 +209,6 @@ def trim_func(value: Any) -> str:
 
 
 def init_function_manager():
-    """Регистрация всех функций"""
     # Строковые функции
     FunctionManager.register("UPPER", upper_func)
     FunctionManager.register("LOWER", lower_func)
@@ -233,5 +229,4 @@ def init_function_manager():
     FunctionManager.register("MAX", max_, is_aggregate=True)
 
 
-# Регистрируем функции при импорте
 init_function_manager()

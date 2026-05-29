@@ -39,7 +39,6 @@ class Table:
 
     def get_column_type(self, column: str) -> type:
         if column not in self.column_types:
-            # Ищем без префикса
             base_name = column.split(".")[-1]
             if base_name in self.column_types:
                 return self.column_types[base_name]
@@ -77,7 +76,7 @@ class Table:
                 val = self.rows[i].get(col)
                 if val is not None:
                     if isinstance(val, datetime):
-                        examples.append(val.strftime("%Y-%m-%d"))
+                        examples.append(val.strftime("%d-%m-%Y"))
                     else:
                         examples.append(str(val))
 
@@ -88,8 +87,7 @@ class Table:
 class ExcelLoader:
     NULL_VALUES = {None, "", "\\N", "NULL", "null", "None"}
 
-    # Добавляем только это - единый формат для вывода
-    DATE_OUTPUT_FORMAT = "%Y-%m-%d"
+    DATE_OUTPUT_FORMAT = "%d-%m-%Y"
 
     def __init__(self):
         self.tables: Dict[str, Table] = {}
@@ -142,7 +140,6 @@ class ExcelLoader:
         if len(non_null) == 0:
             return str
 
-        # Проверяем на целые числа
         try:
             if all(isinstance(x, (int, np.integer)) or
                    (isinstance(x, float) and x == int(x)) or
@@ -152,14 +149,12 @@ class ExcelLoader:
         except:
             pass
 
-        # Проверяем на числа с плавающей точкой
         try:
             if all(self._is_numeric(x) for x in non_null.head(100)):
                 return float
         except:
             pass
 
-        # Проверяем на даты
         if all(self._is_date(x) for x in non_null.head(100)):
             return datetime
 
@@ -191,27 +186,23 @@ class ExcelLoader:
         return False
 
     def _normalize_date(self, value: Any) -> Any:
-        """Привести дату к единому формату YYYY-MM-DD"""
         if value is None:
             return None
 
-        # Если уже в правильном формате
-        if isinstance(value, str) and len(value) == 10 and value[4] == '-' and value[7] == '-':
+        if isinstance(value, str) and len(value) == 10 and value[2] == '-' and value[5] == '-':
             return value
 
-        # Если datetime или Timestamp
         if isinstance(value, (pd.Timestamp, datetime)):
             dt = value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
-            return dt.strftime("%Y-%m-%d")
+            return dt.strftime("%d-%m-%Y")
 
-        # Если строка - парсим
         if isinstance(value, str):
             value = value.strip()
             for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y",
                         "%Y/%m/%d", "%Y.%m.%d", "%m/%d/%Y", "%d.%m.%y", "%Y%m%d"]:
                 try:
                     dt = datetime.strptime(value, fmt)
-                    return dt.strftime("%Y-%m-%d")
+                    return dt.strftime("%d-%m-%Y")
                 except ValueError:
                     continue
         return value
@@ -234,7 +225,6 @@ class ExcelLoader:
                 return float(value)
 
             elif target_type == datetime:
-                # Преобразуем в datetime объект, а не строку
                 if isinstance(value, (pd.Timestamp, datetime)):
                     return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
                 if isinstance(value, str):
