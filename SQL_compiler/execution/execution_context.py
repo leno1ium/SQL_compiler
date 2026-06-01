@@ -1,7 +1,5 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 from datetime import datetime
-import hashlib
-import json
 
 from SQL_compiler.execution.table import Table
 from SQL_compiler.parsing.ast_nodes import *
@@ -22,11 +20,9 @@ class RowContext:
     def get_value(self, column_name: str) -> Any:
         normalized_name = column_name.replace('...', '.').replace('..', '.')
 
-        # 1. Точное совпадение в текущей строке
         if normalized_name in self.row:
             return self.row[normalized_name]
 
-        # 2. Если есть префикс таблицы (S.UNIV_ID)
         if "." in normalized_name:
             parts = normalized_name.split(".")
             if len(parts) == 2:
@@ -48,7 +44,6 @@ class RowContext:
                 if alias_key in self.row:
                     return self.row[alias_key]
 
-        # 3. Поиск по базовому имени (без префикса)
         base_name = normalized_name.split(".")[-1]
 
         matching_keys = [k for k in self.row if k.endswith(f".{base_name}") or k == base_name]
@@ -151,7 +146,6 @@ class ExpressionEvaluator:
         cls._recursion_depth = 0
 
     def _to_datetime(self, value: Any) -> Any:
-        """Преобразует строку в datetime, если возможно, иначе возвращает исходное значение."""
         if isinstance(value, datetime):
             return value
         if isinstance(value, str):
@@ -566,7 +560,6 @@ class ExpressionEvaluator:
                 if left is None:
                     return None
 
-        # Приведение типов для сравнений
         if node.op in (BinOp.EQ, BinOp.NE, BinOp.NE2, BinOp.GT, BinOp.GE, BinOp.LT, BinOp.LE):
             if isinstance(left, datetime) and isinstance(right, str):
                 right = self._to_datetime(right)
