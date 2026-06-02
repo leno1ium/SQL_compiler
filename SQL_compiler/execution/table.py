@@ -2,7 +2,6 @@ from typing import List, Dict, Any, Union
 from datetime import datetime
 from pathlib import Path
 
-import openpyxl
 import pandas as pd
 import numpy as np
 
